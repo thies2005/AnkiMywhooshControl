@@ -50,8 +50,7 @@
         android:theme="@android:style/Theme.Material.NoActionBar">
 
         <activity
-            android:name="com.ankiride.bridge.ui.MainActivity"
-            android:exported="true">
+            android:name="com.ankiride.bridge.ui.MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
