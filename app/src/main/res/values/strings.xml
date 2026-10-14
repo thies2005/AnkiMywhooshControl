@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">AnkiRide Bridge</string>
+    <string name="accessibility_service_description">AnkiRide Bridge accessibility service for routing Zwift Click controller clicks to AnkiDroid and MyWhoosh.</string>
+</resources>
