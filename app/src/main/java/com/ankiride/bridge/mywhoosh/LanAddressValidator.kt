@@ -7,7 +7,7 @@ object LanAddressValidator {
         "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
     )
 
-    fun isAllowedTargetHost(host: String): Boolean {
+    fun isLocalOrLanAddress(host: String): Boolean {
         if (!IPV4_LITERAL_REGEX.matches(host)) return false
         return try {
             val addr = InetAddress.getByName(host)
@@ -16,4 +16,6 @@ object LanAddressValidator {
             false
         }
     }
+
+    fun isAllowedTargetHost(host: String): Boolean = isLocalOrLanAddress(host)
 }

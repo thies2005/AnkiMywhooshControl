@@ -1,128 +1,152 @@
 package com.ankiride.bridge.mywhoosh
 
-import android.util.Log
+import android.content.Context
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
 import com.ankiride.bridge.core.MyWhooshAction
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import java.io.OutputStream
-import java.net.InetSocketAddress
+import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.CopyOnWriteArrayList
 
 class OpenBikeControlClient(
-    private val socketFactory: () -> Socket = { Socket() }
+    private val context: Context? = null,
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 ) {
     companion object {
-        private const val TAG = "OpenBikeControlClient"
-        const val DEFAULT_PORT = 21587
-        const val CONNECT_TIMEOUT_MS = 1500
-        const val SOCKET_TIMEOUT_MS = 2000
-
+        const val SERVICE_TYPE = "_openbikecontrol._tcp."
+        const val SERVICE_NAME = "AnkiRideBridge"
         const val MSG_BUTTON_STATE: Byte = 0x01
-        const val STATE_RELEASED: Byte = 0x00
+        const val MSG_DEVICE_STATUS: Byte = 0x02
         const val STATE_PRESSED: Byte = 0x01
-
-        // Standard OpenBikeControl button IDs
-        const val BTN_SHIFT_UP: Byte = 0x01
-        const val BTN_SHIFT_DOWN: Byte = 0x02
-        const val BTN_STEER_LEFT: Byte = 0x18
-        const val BTN_STEER_RIGHT: Byte = 0x19
-        const val BTN_SELECT: Byte = 0x14
-        const val BTN_BACK: Byte = 0x21
-        const val BTN_TOGGLE_UI: Byte = 0x30
-        const val BTN_EMOTE: Byte = 0x31
-        const val BTN_CAMERA_VIEW: Byte = 0x32
-        const val BTN_POWER_UP: Byte = 0x33
-        const val BTN_SCREENSHOT: Byte = 0x34
-
-        fun mapActionToButtonId(action: MyWhooshAction): Byte {
-            return when (action) {
-                MyWhooshAction.SHIFT_UP -> BTN_SHIFT_UP
-                MyWhooshAction.SHIFT_DOWN -> BTN_SHIFT_DOWN
-                MyWhooshAction.STEER_LEFT -> BTN_STEER_LEFT
-                MyWhooshAction.STEER_RIGHT -> BTN_STEER_RIGHT
-                MyWhooshAction.SELECT -> BTN_SELECT
-                MyWhooshAction.BACK -> BTN_BACK
-                MyWhooshAction.TOGGLE_UI -> BTN_TOGGLE_UI
-                MyWhooshAction.EMOTE -> BTN_EMOTE
-                MyWhooshAction.CAMERA_VIEW -> BTN_CAMERA_VIEW
-                MyWhooshAction.POWER_UP -> BTN_POWER_UP
-                MyWhooshAction.SCREENSHOT -> BTN_SCREENSHOT
-            }
-        }
-
-        fun createButtonPacket(buttonId: Byte, isPressed: Boolean): ByteArray {
-            val state = if (isPressed) STATE_PRESSED else STATE_RELEASED
-            return byteArrayOf(MSG_BUTTON_STATE, buttonId, state)
-        }
+        const val STATE_RELEASED: Byte = 0x00
     }
 
-    private val mutex = Mutex()
-    private var activeSocket: Socket? = null
-    private var activeHost: String? = null
-    private var activePort: Int = -1
+    private var serverSocket: ServerSocket? = null
+    private var acceptJob: Job? = null
+    private var nsdManager: NsdManager? = null
+    private var registrationListener: NsdManager.RegistrationListener? = null
+    val connectedClients = CopyOnWriteArrayList<Socket>()
 
-    suspend fun sendAction(host: String, port: Int, action: MyWhooshAction): Boolean = withContext(Dispatchers.IO) {
-        if (!LanAddressValidator.isAllowedTargetHost(host)) {
-            Log.e(TAG, "Rejected unauthorized target host: $host")
-            return@withContext false
-        }
-
-        val buttonId = mapActionToButtonId(action)
-        val pressPacket = createButtonPacket(buttonId, isPressed = true)
-        val releasePacket = createButtonPacket(buttonId, isPressed = false)
-
-        mutex.withLock {
+    fun startServer(port: Int = 21587) {
+        if (serverSocket != null) return
+        acceptJob = scope.launch(Dispatchers.IO) {
             try {
-                val socket = getOrCreateSocket(host, port)
-                val out: OutputStream = socket.getOutputStream()
-                out.write(pressPacket)
-                out.flush()
-
-                delay(25L) // Brief pulse duration
-
-                out.write(releasePacket)
-                out.flush()
-                return@withContext true
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to send OpenBikeControl action to $host:$port", e)
-                closeSocket()
-                return@withContext false
+                val srv = ServerSocket(port)
+                serverSocket = srv
+                registerMdnsService(srv.localPort)
+                while (isActive && !srv.isClosed) {
+                    val client = srv.accept()
+                    val remoteHost = client.inetAddress?.hostAddress ?: ""
+                    if (LanAddressValidator.isLocalOrLanAddress(remoteHost)) {
+                        connectedClients.add(client)
+                        // Send initial OpenBikeControl 0x02 Device Status (100% battery, connected flag = 1)
+                        sendRawBytes(client, byteArrayOf(MSG_DEVICE_STATUS, 0x64, 0x01))
+                    } else {
+                        client.close()
+                    }
+                }
+            } catch (_: Exception) {
             }
         }
     }
 
-    private fun getOrCreateSocket(host: String, port: Int): Socket {
-        val current = activeSocket
-        if (current != null && current.isConnected && !current.isClosed && activeHost == host && activePort == port) {
-            return current
+    fun hasConnectedClients(): Boolean = connectedClients.any { !it.isClosed && it.isConnected }
+
+    suspend fun sendAction(ip: String, port: Int, action: MyWhooshAction): Boolean = withContext(Dispatchers.IO) {
+        if (!LanAddressValidator.isLocalOrLanAddress(ip)) return@withContext false
+
+        val pressPacket = byteArrayOf(MSG_BUTTON_STATE, action.openBikeOpcode, STATE_PRESSED)
+        val releasePacket = byteArrayOf(MSG_BUTTON_STATE, action.openBikeOpcode, STATE_RELEASED)
+
+        var delivered = false
+        for (client in connectedClients) {
+            if (client.isClosed || !client.isConnected) {
+                connectedClients.remove(client)
+                continue
+            }
+            if (sendRawBytes(client, pressPacket)) {
+                delivered = true
+            } else {
+                connectedClients.remove(client)
+            }
         }
-        closeSocket()
+        if (delivered) {
+            delay(35L)
+            for (client in connectedClients) {
+                sendRawBytes(client, releasePacket)
+            }
+        }
+        delivered
+    }
 
-        val socket = socketFactory()
-        socket.tcpNoDelay = true
-        socket.soTimeout = SOCKET_TIMEOUT_MS
-        socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+    private fun sendRawBytes(socket: Socket, bytes: ByteArray): Boolean {
+        return try {
+            val out: OutputStream = socket.getOutputStream()
+            synchronized(out) {
+                out.write(bytes)
+                out.flush()
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
 
-        activeSocket = socket
-        activeHost = host
-        activePort = port
-        return socket
+    private fun registerMdnsService(port: Int) {
+        val ctx = context ?: return
+        val manager = ctx.getSystemService(Context.NSD_SERVICE) as? NsdManager ?: return
+        nsdManager = manager
+
+        val serviceInfo = NsdServiceInfo().apply {
+            serviceName = SERVICE_NAME
+            serviceType = SERVICE_TYPE
+            setPort(port)
+            setAttribute("v", "1")
+            setAttribute("version", "1")
+            setAttribute("name", "AnkiRide Bridge")
+            setAttribute("model", "Zwift Click v2 Bridge")
+            setAttribute("proto", "tcp")
+        }
+
+        val listener = object : NsdManager.RegistrationListener {
+            override fun onServiceRegistered(info: NsdServiceInfo?) {}
+            override fun onRegistrationFailed(info: NsdServiceInfo?, errorCode: Int) {}
+            override fun onServiceUnregistered(info: NsdServiceInfo?) {}
+            override fun onUnregistrationFailed(info: NsdServiceInfo?, errorCode: Int) {}
+        }
+        registrationListener = listener
+        try {
+            manager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
+        } catch (_: Exception) {
+        }
+    }
+
+    fun stopServer() {
+        acceptJob?.cancel()
+        registrationListener?.let { listener ->
+            try {
+                nsdManager?.unregisterService(listener)
+            } catch (_: Exception) {
+            }
+        }
+        registrationListener = null
+        connectedClients.forEach {
+            try {
+                it.close()
+            } catch (_: Exception) {
+            }
+        }
+        connectedClients.clear()
+        try {
+            serverSocket?.close()
+        } catch (_: Exception) {
+        }
+        serverSocket = null
     }
 
     fun close() {
-        closeSocket()
-    }
-
-    private fun closeSocket() {
-        try {
-            activeSocket?.close()
-        } catch (_: Exception) {
-        }
-        activeSocket = null
-        activeHost = null
-        activePort = -1
+        stopServer()
     }
 }

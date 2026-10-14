@@ -1,7 +1,6 @@
 package com.ankiride.bridge.anki
 
 import com.ankiride.bridge.core.AnkiAction
-import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -35,9 +34,9 @@ class AnkiAccessibilityBridgeTest {
     }
 
     @Test
-    fun testDispatcherReturnsFalseWhenServiceNull() = runBlocking {
+    fun testDispatcherReturnsFalseWhenServiceNull() {
         val dispatcher = AnkiActionDispatcherImpl(serviceProvider = { null })
-        val result = dispatcher.dispatch(AnkiAction.FLIP_OR_EASE_3_GOOD)
+        val result = dispatcher.dispatch(AnkiAction.FLIP_OR_GOOD)
         assertFalse(result)
     }
 }

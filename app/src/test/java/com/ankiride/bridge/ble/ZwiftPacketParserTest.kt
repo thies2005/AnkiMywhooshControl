@@ -46,8 +46,9 @@ class ZwiftPacketParserTest {
         assertNotNull(parsedMask)
         assertEquals(activeExpected, parsedMask)
 
-        val buttons = ZwiftPacketParser.getPressedButtons(parsedMask!!)
-        assertEquals(setOf(ClickButton.A), buttons)
+        val buttonMap = ZwiftPacketParser.parse(packet)
+        assertTrue(buttonMap[ClickButton.A] == true)
+        assertTrue(buttonMap[ClickButton.B] == false)
     }
 
     @Test
@@ -60,8 +61,10 @@ class ZwiftPacketParserTest {
         assertNotNull(parsedMask)
         assertEquals(activeExpected, parsedMask)
 
-        val buttons = ZwiftPacketParser.getPressedButtons(parsedMask!!)
-        assertEquals(setOf(ClickButton.SHIFT_UP_RIGHT, ClickButton.Z), buttons)
+        val buttonMap = ZwiftPacketParser.parse(packet)
+        assertTrue(buttonMap[ClickButton.SHIFT_UP_RIGHT] == true)
+        assertTrue(buttonMap[ClickButton.Z] == true)
+        assertTrue(buttonMap[ClickButton.A] == false)
     }
 
     @Test
@@ -74,8 +77,8 @@ class ZwiftPacketParserTest {
         assertNotNull(parsedMask)
         assertEquals(0, parsedMask)
 
-        val buttons = ZwiftPacketParser.getPressedButtons(parsedMask!!)
-        assertTrue(buttons.isEmpty())
+        val buttonMap = ZwiftPacketParser.parse(packet)
+        assertTrue(buttonMap.values.none { it })
     }
 
     @Test
@@ -133,9 +136,8 @@ class ZwiftPacketParserTest {
             // Must not throw any exception
             val result = ZwiftPacketParser.parseActiveButtonMask(payload)
             if (result != null) {
-                // If by pure chance it formed a valid packet, getPressedButtons must not crash either
-                val buttons = ZwiftPacketParser.getPressedButtons(result)
-                assertNotNull(buttons)
+                val buttonMap = ZwiftPacketParser.parse(payload)
+                assertNotNull(buttonMap)
             }
         }
     }

@@ -1,205 +1,123 @@
 package com.ankiride.bridge.service
 
-import com.ankiride.bridge.core.AnkiAction
-import com.ankiride.bridge.core.AnkiActionDispatcher
-import com.ankiride.bridge.core.AppConfiguration
-import com.ankiride.bridge.core.ButtonGestureEvent
-import com.ankiride.bridge.core.ClickBleController
-import com.ankiride.bridge.core.ClickButton
-import com.ankiride.bridge.core.MyWhooshAction
-import com.ankiride.bridge.core.MyWhooshActionDispatcher
-import com.ankiride.bridge.core.OperatingMode
-import com.ankiride.bridge.core.PressType
+import com.ankiride.bridge.core.*
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 class ActionRouter(
-    private val bleController: ClickBleController,
+    private val scope: CoroutineScope,
+    private val configSupplier: () -> AppConfiguration,
     private val ankiDispatcher: AnkiActionDispatcher,
-    private val myWhooshDispatcher: MyWhooshActionDispatcher,
-    private var config: AppConfiguration = AppConfiguration()
+    private val myWhooshDispatcher: MyWhooshActionDispatcher
 ) {
-    private var routingJob: Job? = null
 
-    fun updateConfig(newConfig: AppConfiguration) {
-        this.config = newConfig
-    }
+    fun routeGesture(event: ButtonGestureEvent) {
+        val config = configSupplier()
 
-    fun start(scope: CoroutineScope) {
-        routingJob?.cancel()
-        routingJob = scope.launch {
-            bleController.gestureEvents.collect { event ->
-                routeEvent(event)
+        when (config.mode) {
+            OperatingMode.MODE_3_ANKI_ONLY -> {
+                val ankiAction = mapAnkiOnlyMode(event) ?: return
+                ankiDispatcher.dispatch(ankiAction)
             }
-        }
-    }
-
-    fun stop() {
-        routingJob?.cancel()
-        routingJob = null
-    }
-
-    suspend fun routeEvent(event: ButtonGestureEvent): Boolean {
-        return when (config.mode) {
-            OperatingMode.MODE_1_TABLET_BOTH,
-            OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH -> routeModeBoth(event)
-            OperatingMode.MODE_3_ANKI_ONLY -> routeModeAnkiOnly(event)
-            OperatingMode.MODE_4_MYWHOOSH_ONLY -> routeModeMyWhooshOnly(event)
-        }
-    }
-
-    private suspend fun routeModeBoth(event: ButtonGestureEvent): Boolean {
-        return when (event.button) {
-            ClickButton.SHIFT_UP_RIGHT -> {
-                if (event.pressType == PressType.DOUBLE_PRESS && config.rightPodOnlyMode) {
-                    myWhooshDispatcher.dispatch(MyWhooshAction.SHIFT_DOWN, config)
-                } else if (event.pressType == PressType.SINGLE_PRESS) {
-                    myWhooshDispatcher.dispatch(MyWhooshAction.SHIFT_UP, config)
-                } else false
+            OperatingMode.MODE_4_MYWHOOSH_ONLY -> {
+                val mwAction = mapMyWhooshOnlyMode(event, config) ?: return
+                scope.launch { myWhooshDispatcher.dispatch(mwAction, config) }
             }
-            ClickButton.SHIFT_DOWN_LEFT -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    myWhooshDispatcher.dispatch(MyWhooshAction.SHIFT_DOWN, config)
-                } else false
-            }
-            ClickButton.A -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    ankiDispatcher.dispatch(AnkiAction.FLIP_OR_EASE_3_GOOD)
-                } else false
-            }
-            ClickButton.B -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    ankiDispatcher.dispatch(AnkiAction.FLIP_OR_EASE_2_HARD)
-                } else false
-            }
-            ClickButton.Y -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    ankiDispatcher.dispatch(AnkiAction.FLIP_OR_EASE_1_AGAIN)
-                } else false
-            }
-            ClickButton.Z -> {
-                when (event.pressType) {
-                    PressType.SINGLE_PRESS -> ankiDispatcher.dispatch(AnkiAction.FLIP_OR_EASE_4_EASY)
-                    PressType.LONG_PRESS -> ankiDispatcher.dispatch(AnkiAction.UNDO)
-                    else -> false
+            OperatingMode.MODE_1_TABLET_SPLIT_SCREEN, OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH -> {
+                if (config.rightPodOnlyNoZwift) {
+                    routeSinglePodCombinedMode(event, config)
+                } else {
+                    routeDualPodCombinedMode(event, config)
                 }
             }
-            ClickButton.LEFT -> {
-                myWhooshDispatcher.dispatch(MyWhooshAction.STEER_LEFT, config)
-            }
-            ClickButton.RIGHT -> {
-                myWhooshDispatcher.dispatch(MyWhooshAction.STEER_RIGHT, config)
-            }
-            ClickButton.UP -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    myWhooshDispatcher.dispatch(MyWhooshAction.TOGGLE_UI, config)
-                } else false
-            }
-            ClickButton.DOWN -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    myWhooshDispatcher.dispatch(MyWhooshAction.EMOTE, config)
-                } else false
-            }
-            else -> false
         }
     }
 
-    private suspend fun routeModeAnkiOnly(event: ButtonGestureEvent): Boolean {
-        // Disables MyWhoosh output completely
-        return when (event.button) {
+    private fun routeSinglePodCombinedMode(event: ButtonGestureEvent, config: AppConfiguration) {
+        when (event.button) {
             ClickButton.SHIFT_UP_RIGHT -> {
-                if (event.pressType == PressType.DOUBLE_PRESS && config.rightPodOnlyMode) {
-                    ankiDispatcher.dispatch(AnkiAction.BURY_CARD)
-                } else if (event.pressType == PressType.SINGLE_PRESS) {
-                    ankiDispatcher.dispatch(AnkiAction.REPLAY_AUDIO)
-                } else false
+                val mwAction = if (event.type == PressType.LONG_PRESS) {
+                    MyWhooshAction.SHIFT_DOWN
+                } else {
+                    MyWhooshAction.SHIFT_UP
+                }
+                scope.launch { myWhooshDispatcher.dispatch(mwAction, config) }
             }
-            ClickButton.SHIFT_DOWN_LEFT -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
+            ClickButton.Z -> {
+                if (event.type == PressType.LONG_PRESS) {
                     ankiDispatcher.dispatch(AnkiAction.UNDO)
-                } else false
-            }
-            ClickButton.A -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    ankiDispatcher.dispatch(AnkiAction.FLIP_OR_EASE_3_GOOD)
-                } else false
-            }
-            ClickButton.B -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    ankiDispatcher.dispatch(AnkiAction.FLIP_OR_EASE_2_HARD)
-                } else false
-            }
-            ClickButton.Y -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    ankiDispatcher.dispatch(AnkiAction.FLIP_OR_EASE_1_AGAIN)
-                } else false
-            }
-            ClickButton.Z -> {
-                when (event.pressType) {
-                    PressType.SINGLE_PRESS -> ankiDispatcher.dispatch(AnkiAction.FLIP_OR_EASE_4_EASY)
-                    PressType.LONG_PRESS -> ankiDispatcher.dispatch(AnkiAction.UNDO)
-                    else -> false
+                } else if (config.useZForShiftDownInSinglePodMode) {
+                    scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.SHIFT_DOWN, config) }
+                } else {
+                    ankiDispatcher.dispatch(AnkiAction.FLIP_OR_EASY)
                 }
             }
-            ClickButton.LEFT -> ankiDispatcher.dispatch(AnkiAction.PREV_HINT)
-            ClickButton.RIGHT -> ankiDispatcher.dispatch(AnkiAction.NEXT_HINT)
-            ClickButton.UP -> ankiDispatcher.dispatch(AnkiAction.REPLAY_AUDIO)
-            ClickButton.DOWN -> ankiDispatcher.dispatch(AnkiAction.BURY_CARD)
-            else -> false
+            ClickButton.A -> {
+                val action = if (event.type == PressType.LONG_PRESS) AnkiAction.FLIP_OR_EASY else AnkiAction.FLIP_OR_GOOD
+                ankiDispatcher.dispatch(action)
+            }
+            ClickButton.B -> ankiDispatcher.dispatch(AnkiAction.FLIP_OR_HARD)
+            ClickButton.Y -> {
+                val action = if (event.type == PressType.LONG_PRESS) AnkiAction.UNDO else AnkiAction.FLIP_OR_AGAIN
+                ankiDispatcher.dispatch(action)
+            }
+            else -> {}
         }
     }
 
-    private suspend fun routeModeMyWhooshOnly(event: ButtonGestureEvent): Boolean {
-        // Disables AnkiDroid clicking completely
-        return when (event.button) {
-            ClickButton.SHIFT_UP_RIGHT -> {
-                if (event.pressType == PressType.DOUBLE_PRESS && config.rightPodOnlyMode) {
-                    myWhooshDispatcher.dispatch(MyWhooshAction.SHIFT_DOWN, config)
-                } else if (event.pressType == PressType.SINGLE_PRESS) {
-                    myWhooshDispatcher.dispatch(MyWhooshAction.SHIFT_UP, config)
-                } else false
-            }
-            ClickButton.SHIFT_DOWN_LEFT -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    myWhooshDispatcher.dispatch(MyWhooshAction.SHIFT_DOWN, config)
-                } else false
-            }
-            ClickButton.A -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    myWhooshDispatcher.dispatch(MyWhooshAction.SELECT, config)
-                } else false
-            }
-            ClickButton.B -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    myWhooshDispatcher.dispatch(MyWhooshAction.BACK, config)
-                } else false
-            }
-            ClickButton.Y -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    myWhooshDispatcher.dispatch(MyWhooshAction.TOGGLE_UI, config)
-                } else false
-            }
+    private fun routeDualPodCombinedMode(event: ButtonGestureEvent, config: AppConfiguration) {
+        when (event.button) {
+            // Right Pod A/B/Y/Z -> AnkiDroid
+            ClickButton.A -> ankiDispatcher.dispatch(AnkiAction.FLIP_OR_GOOD)
+            ClickButton.B -> ankiDispatcher.dispatch(AnkiAction.FLIP_OR_HARD)
+            ClickButton.Y -> ankiDispatcher.dispatch(AnkiAction.FLIP_OR_AGAIN)
             ClickButton.Z -> {
-                when (event.pressType) {
-                    PressType.SINGLE_PRESS -> myWhooshDispatcher.dispatch(MyWhooshAction.POWER_UP, config)
-                    PressType.LONG_PRESS -> myWhooshDispatcher.dispatch(MyWhooshAction.SCREENSHOT, config)
-                    else -> false
-                }
+                val action = if (event.type == PressType.LONG_PRESS) AnkiAction.UNDO else AnkiAction.FLIP_OR_EASY
+                ankiDispatcher.dispatch(action)
             }
-            ClickButton.LEFT -> myWhooshDispatcher.dispatch(MyWhooshAction.STEER_LEFT, config)
-            ClickButton.RIGHT -> myWhooshDispatcher.dispatch(MyWhooshAction.STEER_RIGHT, config)
-            ClickButton.UP -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    myWhooshDispatcher.dispatch(MyWhooshAction.CAMERA_VIEW, config)
-                } else false
+            // Shift Rockers & Left Pod D-Pad -> MyWhoosh
+            ClickButton.SHIFT_UP_RIGHT, ClickButton.SHIFT_UP_LEFT -> {
+                scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.SHIFT_UP, config) }
             }
-            ClickButton.DOWN -> {
-                if (event.pressType == PressType.SINGLE_PRESS) {
-                    myWhooshDispatcher.dispatch(MyWhooshAction.EMOTE, config)
-                } else false
+            ClickButton.SHIFT_DOWN_LEFT, ClickButton.SHIFT_DOWN_RIGHT -> {
+                scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.SHIFT_DOWN, config) }
             }
-            else -> false
+            ClickButton.LEFT -> scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.STEER_LEFT, config) }
+            ClickButton.RIGHT -> scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.STEER_RIGHT, config) }
+            ClickButton.UP -> scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.TOGGLE_CAMERA, config) }
+            ClickButton.DOWN -> scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.EMOTE, config) }
+            else -> {}
+        }
+    }
+
+    private fun mapAnkiOnlyMode(event: ButtonGestureEvent): AnkiAction? {
+        return when (event.button) {
+            ClickButton.A, ClickButton.SHIFT_UP_RIGHT -> AnkiAction.FLIP_OR_GOOD
+            ClickButton.B -> AnkiAction.FLIP_OR_HARD
+            ClickButton.Y -> if (event.type == PressType.LONG_PRESS) AnkiAction.UNDO else AnkiAction.FLIP_OR_AGAIN
+            ClickButton.Z -> if (event.type == PressType.LONG_PRESS) AnkiAction.UNDO else AnkiAction.FLIP_OR_EASY
+            ClickButton.SHIFT_DOWN_LEFT, ClickButton.LEFT -> AnkiAction.UNDO
+            ClickButton.RIGHT, ClickButton.UP, ClickButton.DOWN -> AnkiAction.FLIP_CARD
+            else -> null
+        }
+    }
+
+    private fun mapMyWhooshOnlyMode(event: ButtonGestureEvent, config: AppConfiguration): MyWhooshAction? {
+        return when (event.button) {
+            ClickButton.SHIFT_UP_RIGHT, ClickButton.SHIFT_UP_LEFT -> {
+                if (config.rightPodOnlyNoZwift && event.type == PressType.LONG_PRESS) MyWhooshAction.SHIFT_DOWN
+                else MyWhooshAction.SHIFT_UP
+            }
+            ClickButton.SHIFT_DOWN_LEFT, ClickButton.SHIFT_DOWN_RIGHT -> MyWhooshAction.SHIFT_DOWN
+            ClickButton.Z -> if (config.rightPodOnlyNoZwift) MyWhooshAction.SHIFT_DOWN else MyWhooshAction.USE_POWERUP
+            ClickButton.LEFT -> MyWhooshAction.STEER_LEFT
+            ClickButton.RIGHT -> MyWhooshAction.STEER_RIGHT
+            ClickButton.UP -> MyWhooshAction.TOGGLE_CAMERA
+            ClickButton.DOWN -> MyWhooshAction.EMOTE
+            ClickButton.A -> MyWhooshAction.UI_CONFIRM
+            ClickButton.B -> MyWhooshAction.UI_BACK
+            ClickButton.Y -> MyWhooshAction.HUD_TOGGLE
+            else -> null
         }
     }
 }

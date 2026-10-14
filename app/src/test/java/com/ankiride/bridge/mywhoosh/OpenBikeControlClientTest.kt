@@ -2,7 +2,7 @@ package com.ankiride.bridge.mywhoosh
 
 import com.ankiride.bridge.core.MyWhooshAction
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -10,71 +10,85 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.InputStream
-import java.net.ServerSocket
 import java.net.Socket
 
 class OpenBikeControlClientTest {
 
     @Test
-    fun testButtonMappingAndPacketFormat() {
-        assertEquals(0x01.toByte(), OpenBikeControlClient.mapActionToButtonId(MyWhooshAction.SHIFT_UP))
-        assertEquals(0x02.toByte(), OpenBikeControlClient.mapActionToButtonId(MyWhooshAction.SHIFT_DOWN))
-        assertEquals(0x18.toByte(), OpenBikeControlClient.mapActionToButtonId(MyWhooshAction.STEER_LEFT))
-        assertEquals(0x19.toByte(), OpenBikeControlClient.mapActionToButtonId(MyWhooshAction.STEER_RIGHT))
-        assertEquals(0x14.toByte(), OpenBikeControlClient.mapActionToButtonId(MyWhooshAction.SELECT))
-        assertEquals(0x21.toByte(), OpenBikeControlClient.mapActionToButtonId(MyWhooshAction.BACK))
-        assertEquals(0x30.toByte(), OpenBikeControlClient.mapActionToButtonId(MyWhooshAction.TOGGLE_UI))
-        assertEquals(0x31.toByte(), OpenBikeControlClient.mapActionToButtonId(MyWhooshAction.EMOTE))
-        assertEquals(0x32.toByte(), OpenBikeControlClient.mapActionToButtonId(MyWhooshAction.CAMERA_VIEW))
-        assertEquals(0x33.toByte(), OpenBikeControlClient.mapActionToButtonId(MyWhooshAction.POWER_UP))
-        assertEquals(0x34.toByte(), OpenBikeControlClient.mapActionToButtonId(MyWhooshAction.SCREENSHOT))
-
-        val pressPacket = OpenBikeControlClient.createButtonPacket(0x01.toByte(), isPressed = true)
-        assertArrayEquals(byteArrayOf(0x01, 0x01, 0x01), pressPacket)
-
-        val releasePacket = OpenBikeControlClient.createButtonPacket(0x01.toByte(), isPressed = false)
-        assertArrayEquals(byteArrayOf(0x01, 0x01, 0x00), releasePacket)
+    fun testActionOpcodes() {
+        assertEquals(0x01.toByte(), MyWhooshAction.SHIFT_UP.openBikeOpcode)
+        assertEquals(0x02.toByte(), MyWhooshAction.SHIFT_DOWN.openBikeOpcode)
+        assertEquals(0x18.toByte(), MyWhooshAction.STEER_LEFT.openBikeOpcode)
+        assertEquals(0x19.toByte(), MyWhooshAction.STEER_RIGHT.openBikeOpcode)
+        assertEquals(0x14.toByte(), MyWhooshAction.UI_CONFIRM.openBikeOpcode)
+        assertEquals(0x15.toByte(), MyWhooshAction.UI_BACK.openBikeOpcode)
+        assertEquals(0x40.toByte(), MyWhooshAction.TOGGLE_CAMERA.openBikeOpcode)
+        assertEquals(0x44.toByte(), MyWhooshAction.HUD_TOGGLE.openBikeOpcode)
+        assertEquals(0x20.toByte(), MyWhooshAction.EMOTE.openBikeOpcode)
+        assertEquals(0x24.toByte(), MyWhooshAction.SCREENSHOT.openBikeOpcode)
+        assertEquals(0x50.toByte(), MyWhooshAction.USE_POWERUP.openBikeOpcode)
     }
 
     @Test
-    fun testSendActionToMockServer() = runBlocking(Dispatchers.IO) {
-        val server = ServerSocket(0)
-        val port = server.localPort
-        val client = OpenBikeControlClient()
+    fun testServerLifecycleAndActionBroadcast() = runBlocking(Dispatchers.IO) {
+        val server = OpenBikeControlClient()
+        server.startServer(0) // dynamic port
 
-        val serverDeferred = async {
-            val clientSocket: Socket = server.accept()
-            val input: InputStream = clientSocket.getInputStream()
-            val buf = ByteArray(6)
-            var totalRead = 0
-            while (totalRead < 6) {
-                val r = input.read(buf, totalRead, 6 - totalRead)
-                if (r < 0) break
-                totalRead += r
-            }
-            clientSocket.close()
-            buf
+        // Wait a moment for server to bind
+        delay(100L)
+
+        // Connect a test client socket
+        var clientPort = 0
+        // Find bound port via reflection or testing
+        val srvField = server.javaClass.getDeclaredField("serverSocket")
+        srvField.isAccessible = true
+        val srvSocket = srvField.get(server) as? java.net.ServerSocket
+        if (srvSocket != null) {
+            clientPort = srvSocket.localPort
         }
 
-        val success = client.sendAction("127.0.0.1", port, MyWhooshAction.SHIFT_UP)
-        assertTrue(success)
+        assertTrue(clientPort > 0)
 
-        val received = serverDeferred.await()
-        server.close()
-        client.close()
+        val socket = Socket("127.0.0.1", clientPort)
+        val input: InputStream = socket.getInputStream()
 
-        // Expect: [0x01, 0x01, 0x01] followed by [0x01, 0x01, 0x00]
+        // Expect initial 3 bytes device status: [0x02, 0x64, 0x01]
+        val statusBuf = ByteArray(3)
+        var totalRead = 0
+        while (totalRead < 3) {
+            val r = input.read(statusBuf, totalRead, 3 - totalRead)
+            if (r < 0) break
+            totalRead += r
+        }
+        assertArrayEquals(byteArrayOf(0x02, 0x64, 0x01), statusBuf)
+
+        assertTrue(server.hasConnectedClients())
+
+        // Send SHIFT_UP action
+        val delivered = server.sendAction("127.0.0.1", clientPort, MyWhooshAction.SHIFT_UP)
+        assertTrue(delivered)
+
+        // Client should receive 6 bytes: [0x01, 0x01, 0x01] then [0x01, 0x01, 0x00]
+        val actionBuf = ByteArray(6)
+        totalRead = 0
+        while (totalRead < 6) {
+            val r = input.read(actionBuf, totalRead, 6 - totalRead)
+            if (r < 0) break
+            totalRead += r
+        }
         assertArrayEquals(
             byteArrayOf(0x01, 0x01, 0x01, 0x01, 0x01, 0x00),
-            received
+            actionBuf
         )
+
+        socket.close()
+        server.stopServer()
     }
 
     @Test
     fun testSendActionRejectsPublicIp() = runBlocking {
-        val client = OpenBikeControlClient()
-        val success = client.sendAction("8.8.8.8", 21587, MyWhooshAction.SHIFT_UP)
+        val server = OpenBikeControlClient()
+        val success = server.sendAction("8.8.8.8", 21587, MyWhooshAction.SHIFT_UP)
         assertFalse(success)
-        client.close()
     }
 }

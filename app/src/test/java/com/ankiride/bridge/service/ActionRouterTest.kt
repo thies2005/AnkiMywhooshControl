@@ -1,39 +1,20 @@
 package com.ankiride.bridge.service
 
-import com.ankiride.bridge.core.AnkiAction
-import com.ankiride.bridge.core.AnkiActionDispatcher
-import com.ankiride.bridge.core.AppConfiguration
-import com.ankiride.bridge.core.BleConnectionState
-import com.ankiride.bridge.core.ButtonGestureEvent
-import com.ankiride.bridge.core.ClickBleController
-import com.ankiride.bridge.core.ClickButton
-import com.ankiride.bridge.core.MyWhooshAction
-import com.ankiride.bridge.core.MyWhooshActionDispatcher
-import com.ankiride.bridge.core.OperatingMode
-import com.ankiride.bridge.core.PressType
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.runBlocking
+import com.ankiride.bridge.core.*
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ActionRouterTest {
-
-    private class FakeBleController : ClickBleController {
-        override val connectionState: StateFlow<BleConnectionState> = MutableStateFlow(BleConnectionState.Disconnected)
-        val eventFlow = MutableSharedFlow<ButtonGestureEvent>(extraBufferCapacity = 64)
-        override val gestureEvents: SharedFlow<ButtonGestureEvent> = eventFlow
-        override fun start(config: AppConfiguration) {}
-        override fun stop() {}
-    }
 
     private class FakeAnkiDispatcher : AnkiActionDispatcher {
         val dispatchedActions = mutableListOf<AnkiAction>()
-        override suspend fun dispatch(action: AnkiAction): Boolean {
+        override fun dispatch(action: AnkiAction): Boolean {
             dispatchedActions.add(action)
             return true
         }
@@ -41,50 +22,109 @@ class ActionRouterTest {
 
     private class FakeMyWhooshDispatcher : MyWhooshActionDispatcher {
         val dispatchedActions = mutableListOf<MyWhooshAction>()
-        val receivedConfigs = mutableListOf<AppConfiguration>()
         override suspend fun dispatch(action: MyWhooshAction, config: AppConfiguration): Boolean {
             dispatchedActions.add(action)
-            receivedConfigs.add(config)
             return true
         }
     }
 
-    private lateinit var bleController: FakeBleController
     private lateinit var ankiDispatcher: FakeAnkiDispatcher
     private lateinit var myWhooshDispatcher: FakeMyWhooshDispatcher
 
     @Before
     fun setUp() {
-        bleController = FakeBleController()
         ankiDispatcher = FakeAnkiDispatcher()
         myWhooshDispatcher = FakeMyWhooshDispatcher()
     }
 
     @Test
-    fun testMode1TabletBothRouting() = runBlocking {
+    fun testSinglePodDefaultCombinedModeRouting() = runTest {
+        var currentConfig = AppConfiguration(
+            mode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
+            rightPodOnlyNoZwift = true,
+            useZForShiftDownInSinglePodMode = true
+        )
         val router = ActionRouter(
-            bleController = bleController,
+            scope = this,
+            configSupplier = { currentConfig },
             ankiDispatcher = ankiDispatcher,
-            myWhooshDispatcher = myWhooshDispatcher,
-            config = AppConfiguration(mode = OperatingMode.MODE_1_TABLET_BOTH)
+            myWhooshDispatcher = myWhooshDispatcher
+        )
+
+        // Right Pod Rocker: Single click = Shift Up, Long press = Shift Down
+        router.routeGesture(ButtonGestureEvent(ClickButton.SHIFT_UP_RIGHT, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.SHIFT_UP_RIGHT, PressType.LONG_PRESS))
+
+        // Top Z: Single click = Shift Down, Long press = Undo
+        router.routeGesture(ButtonGestureEvent(ClickButton.Z, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.Z, PressType.LONG_PRESS))
+
+        // A Button: Single click = Good, Long press = Easy
+        router.routeGesture(ButtonGestureEvent(ClickButton.A, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.A, PressType.LONG_PRESS))
+
+        // B Button: Hard
+        router.routeGesture(ButtonGestureEvent(ClickButton.B, PressType.SINGLE_CLICK))
+
+        // Y Button: Single click = Again, Long press = Undo
+        router.routeGesture(ButtonGestureEvent(ClickButton.Y, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.Y, PressType.LONG_PRESS))
+
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(
+            listOf(
+                MyWhooshAction.SHIFT_UP,
+                MyWhooshAction.SHIFT_DOWN,
+                MyWhooshAction.SHIFT_DOWN
+            ),
+            myWhooshDispatcher.dispatchedActions
+        )
+
+        assertEquals(
+            listOf(
+                AnkiAction.UNDO,
+                AnkiAction.FLIP_OR_GOOD,
+                AnkiAction.FLIP_OR_EASY,
+                AnkiAction.FLIP_OR_HARD,
+                AnkiAction.FLIP_OR_AGAIN,
+                AnkiAction.UNDO
+            ),
+            ankiDispatcher.dispatchedActions
+        )
+    }
+
+    @Test
+    fun testDualPodCombinedModeRouting() = runTest {
+        val config = AppConfiguration(
+            mode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
+            rightPodOnlyNoZwift = false
+        )
+        val router = ActionRouter(
+            scope = this,
+            configSupplier = { config },
+            ankiDispatcher = ankiDispatcher,
+            myWhooshDispatcher = myWhooshDispatcher
         )
 
         // Shifting
-        router.routeEvent(ButtonGestureEvent(ClickButton.SHIFT_UP_RIGHT, PressType.SINGLE_PRESS, 100L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.SHIFT_DOWN_LEFT, PressType.SINGLE_PRESS, 200L))
+        router.routeGesture(ButtonGestureEvent(ClickButton.SHIFT_UP_RIGHT, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.SHIFT_DOWN_LEFT, PressType.SINGLE_CLICK))
 
-        // Review buttons
-        router.routeEvent(ButtonGestureEvent(ClickButton.A, PressType.SINGLE_PRESS, 300L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.B, PressType.SINGLE_PRESS, 400L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.Y, PressType.SINGLE_PRESS, 500L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.Z, PressType.SINGLE_PRESS, 600L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.Z, PressType.LONG_PRESS, 700L))
+        // Right Pod diamond -> AnkiDroid
+        router.routeGesture(ButtonGestureEvent(ClickButton.A, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.B, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.Y, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.Z, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.Z, PressType.LONG_PRESS))
 
-        // D-pad steering & actions
-        router.routeEvent(ButtonGestureEvent(ClickButton.LEFT, PressType.SINGLE_PRESS, 800L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.RIGHT, PressType.SINGLE_PRESS, 900L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.UP, PressType.SINGLE_PRESS, 1000L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.DOWN, PressType.SINGLE_PRESS, 1100L))
+        // Left Pod D-Pad -> MyWhoosh
+        router.routeGesture(ButtonGestureEvent(ClickButton.LEFT, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.RIGHT, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.UP, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.DOWN, PressType.SINGLE_CLICK))
+
+        testScheduler.advanceUntilIdle()
 
         assertEquals(
             listOf(
@@ -92,7 +132,7 @@ class ActionRouterTest {
                 MyWhooshAction.SHIFT_DOWN,
                 MyWhooshAction.STEER_LEFT,
                 MyWhooshAction.STEER_RIGHT,
-                MyWhooshAction.TOGGLE_UI,
+                MyWhooshAction.TOGGLE_CAMERA,
                 MyWhooshAction.EMOTE
             ),
             myWhooshDispatcher.dispatchedActions
@@ -100,10 +140,10 @@ class ActionRouterTest {
 
         assertEquals(
             listOf(
-                AnkiAction.FLIP_OR_EASE_3_GOOD,
-                AnkiAction.FLIP_OR_EASE_2_HARD,
-                AnkiAction.FLIP_OR_EASE_1_AGAIN,
-                AnkiAction.FLIP_OR_EASE_4_EASY,
+                AnkiAction.FLIP_OR_GOOD,
+                AnkiAction.FLIP_OR_HARD,
+                AnkiAction.FLIP_OR_AGAIN,
+                AnkiAction.FLIP_OR_EASY,
                 AnkiAction.UNDO
             ),
             ankiDispatcher.dispatchedActions
@@ -111,104 +151,80 @@ class ActionRouterTest {
     }
 
     @Test
-    fun testMode1RightPodOnlyDoublePressShiftDown() = runBlocking {
+    fun testMode3AnkiOnlyRouting() = runTest {
+        val config = AppConfiguration(mode = OperatingMode.MODE_3_ANKI_ONLY)
         val router = ActionRouter(
-            bleController = bleController,
+            scope = this,
+            configSupplier = { config },
             ankiDispatcher = ankiDispatcher,
-            myWhooshDispatcher = myWhooshDispatcher,
-            config = AppConfiguration(mode = OperatingMode.MODE_1_TABLET_BOTH, rightPodOnlyMode = true)
+            myWhooshDispatcher = myWhooshDispatcher
         )
 
-        router.routeEvent(ButtonGestureEvent(ClickButton.SHIFT_UP_RIGHT, PressType.DOUBLE_PRESS, 100L))
-        assertEquals(listOf(MyWhooshAction.SHIFT_DOWN), myWhooshDispatcher.dispatchedActions)
-        assertTrue(ankiDispatcher.dispatchedActions.isEmpty())
-    }
+        router.routeGesture(ButtonGestureEvent(ClickButton.A, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.B, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.Y, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.Y, PressType.LONG_PRESS))
+        router.routeGesture(ButtonGestureEvent(ClickButton.Z, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.Z, PressType.LONG_PRESS))
+        router.routeGesture(ButtonGestureEvent(ClickButton.LEFT, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.RIGHT, PressType.SINGLE_CLICK))
 
-    @Test
-    fun testMode2TabletAnkiPhoneMyWhooshRouting() = runBlocking {
-        val phoneIp = "192.168.1.105"
-        val router = ActionRouter(
-            bleController = bleController,
-            ankiDispatcher = ankiDispatcher,
-            myWhooshDispatcher = myWhooshDispatcher,
-            config = AppConfiguration(
-                mode = OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH,
-                targetMyWhooshHost = phoneIp
-            )
-        )
+        testScheduler.advanceUntilIdle()
 
-        router.routeEvent(ButtonGestureEvent(ClickButton.SHIFT_UP_RIGHT, PressType.SINGLE_PRESS, 100L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.A, PressType.SINGLE_PRESS, 200L))
-
-        assertEquals(listOf(MyWhooshAction.SHIFT_UP), myWhooshDispatcher.dispatchedActions)
-        assertEquals(phoneIp, myWhooshDispatcher.receivedConfigs.first().targetMyWhooshHost)
-        assertEquals(listOf(AnkiAction.FLIP_OR_EASE_3_GOOD), ankiDispatcher.dispatchedActions)
-    }
-
-    @Test
-    fun testMode3AnkiOnlyRouting() = runBlocking {
-        val router = ActionRouter(
-            bleController = bleController,
-            ankiDispatcher = ankiDispatcher,
-            myWhooshDispatcher = myWhooshDispatcher,
-            config = AppConfiguration(mode = OperatingMode.MODE_3_ANKI_ONLY)
-        )
-
-        router.routeEvent(ButtonGestureEvent(ClickButton.SHIFT_UP_RIGHT, PressType.SINGLE_PRESS, 100L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.SHIFT_DOWN_LEFT, PressType.SINGLE_PRESS, 200L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.LEFT, PressType.SINGLE_PRESS, 300L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.RIGHT, PressType.SINGLE_PRESS, 400L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.UP, PressType.SINGLE_PRESS, 500L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.DOWN, PressType.SINGLE_PRESS, 600L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.Z, PressType.LONG_PRESS, 700L))
-
-        // MyWhoosh dispatcher must NEVER be invoked in Mode 3
         assertTrue(myWhooshDispatcher.dispatchedActions.isEmpty())
-
         assertEquals(
             listOf(
-                AnkiAction.REPLAY_AUDIO,
+                AnkiAction.FLIP_OR_GOOD,
+                AnkiAction.FLIP_OR_HARD,
+                AnkiAction.FLIP_OR_AGAIN,
                 AnkiAction.UNDO,
-                AnkiAction.PREV_HINT,
-                AnkiAction.NEXT_HINT,
-                AnkiAction.REPLAY_AUDIO,
-                AnkiAction.BURY_CARD,
-                AnkiAction.UNDO
+                AnkiAction.FLIP_OR_EASY,
+                AnkiAction.UNDO,
+                AnkiAction.UNDO,
+                AnkiAction.FLIP_CARD
             ),
             ankiDispatcher.dispatchedActions
         )
     }
 
     @Test
-    fun testMode4MyWhooshOnlyRouting() = runBlocking {
+    fun testMode4MyWhooshOnlyRouting() = runTest {
+        val config = AppConfiguration(
+            mode = OperatingMode.MODE_4_MYWHOOSH_ONLY,
+            rightPodOnlyNoZwift = false
+        )
         val router = ActionRouter(
-            bleController = bleController,
+            scope = this,
+            configSupplier = { config },
             ankiDispatcher = ankiDispatcher,
-            myWhooshDispatcher = myWhooshDispatcher,
-            config = AppConfiguration(mode = OperatingMode.MODE_4_MYWHOOSH_ONLY)
+            myWhooshDispatcher = myWhooshDispatcher
         )
 
-        router.routeEvent(ButtonGestureEvent(ClickButton.SHIFT_UP_RIGHT, PressType.SINGLE_PRESS, 100L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.A, PressType.SINGLE_PRESS, 200L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.B, PressType.SINGLE_PRESS, 300L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.Y, PressType.SINGLE_PRESS, 400L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.Z, PressType.SINGLE_PRESS, 500L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.Z, PressType.LONG_PRESS, 600L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.UP, PressType.SINGLE_PRESS, 700L))
-        router.routeEvent(ButtonGestureEvent(ClickButton.DOWN, PressType.SINGLE_PRESS, 800L))
+        router.routeGesture(ButtonGestureEvent(ClickButton.SHIFT_UP_RIGHT, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.SHIFT_DOWN_LEFT, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.A, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.B, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.Y, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.Z, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.LEFT, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.RIGHT, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.UP, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.DOWN, PressType.SINGLE_CLICK))
 
-        // Anki dispatcher must NEVER be invoked in Mode 4
+        testScheduler.advanceUntilIdle()
+
         assertTrue(ankiDispatcher.dispatchedActions.isEmpty())
-
         assertEquals(
             listOf(
                 MyWhooshAction.SHIFT_UP,
-                MyWhooshAction.SELECT,
-                MyWhooshAction.BACK,
-                MyWhooshAction.TOGGLE_UI,
-                MyWhooshAction.POWER_UP,
-                MyWhooshAction.SCREENSHOT,
-                MyWhooshAction.CAMERA_VIEW,
+                MyWhooshAction.SHIFT_DOWN,
+                MyWhooshAction.UI_CONFIRM,
+                MyWhooshAction.UI_BACK,
+                MyWhooshAction.HUD_TOGGLE,
+                MyWhooshAction.USE_POWERUP,
+                MyWhooshAction.STEER_LEFT,
+                MyWhooshAction.STEER_RIGHT,
+                MyWhooshAction.TOGGLE_CAMERA,
                 MyWhooshAction.EMOTE
             ),
             myWhooshDispatcher.dispatchedActions

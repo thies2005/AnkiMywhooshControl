@@ -1,9 +1,18 @@
 # AnkiRide Bridge (`com.ankiride.bridge`)
 
-An Android application (Kotlin, Jetpack Compose, Min SDK 29 / Target SDK 35) that connects a **Zwift Click v2** (10-button dual-pod BLE handlebar controller) and dynamically routes button gestures simultaneously to:
+A 100% standalone Android application (Kotlin, Jetpack Compose, Min SDK 29 / Target SDK 35) that connects a **Zwift Click v2** (10-button dual-pod BLE handlebar controller) and dynamically routes inputs to:
 
-1. **AnkiDroid** — Automated card review clicking via an Android `AccessibilityService` (`ACTION_CLICK`) without requiring input focus, with auto-detection of Question vs. Answer state.
-2. **MyWhoosh** — Virtual gear shifting and steering via the official **OpenBikeControl Network Protocol** (TCP port 21587 over localhost `127.0.0.1` or Wi-Fi LAN with mDNS discovery), featuring an automatic local accessibility touch fallback for **MyWhoosh MyShift**.
+1. **AnkiDroid** — Automated card review clicking via an Android `AccessibilityService` (`ACTION_CLICK`) without requiring input focus, using a 3-layer clicking engine (View IDs -> Bottom-bar labels -> Geometric column tap) with a 350ms post-flip bounce guard.
+2. **MyWhoosh** — Native virtual shifting and steering via a built-in **`_openbikecontrol._tcp` binary server & mDNS advertiser** (TCP port 21587 over `127.0.0.1` or Wi-Fi LAN), completely replacing third-party apps like BikeControl or Zwift, plus an automatic accessibility touch fallback for **MyWhoosh MyShift**.
+
+---
+
+## Zero-Quirk Architecture Highlights
+
+- **Default 1-Pod Mode (Right Pod Only)**: Uses the Right Pod (`A`, `B`, `Y`, `Z` + top `+` rocker) which has no 24-hour sleep lock and never requires the Zwift app. Instant mechanical shifting (**Top `+` Rocker = Shift Up**, **Top `Z` Button = Shift Down**) and 100% card review coverage (**`Y` = Again**, **`B` = Hard**, **`A` = Good**, **Long-Press `A` = Easy**, **Long-Press `Y` = Undo**).
+- **Optional 2-Pod Full Mode**: Enable the Left Pod (`–` Rocker + D-Pad) with automatic 55-second watchdog auto-reconnect.
+- **Built-In OpenBikeControl Server**: Advertises `_openbikecontrol._tcp` on port 21587. When MyWhoosh opens on the tablet or a phone over Wi-Fi, it auto-discovers this app and connects directly.
+- **3-Layer AnkiDroid Clicking + 350ms Bounce Guard**: Automatically flips cards, grades them, and prevents accidental double-tap grading on bumpy sprints.
 
 ---
 
@@ -11,39 +20,29 @@ An Android application (Kotlin, Jetpack Compose, Min SDK 29 / Target SDK 35) tha
 
 | Mode | Role / Routing |
 | :--- | :--- |
-| **Mode 1: Tablet Split-Screen** | Runs MyWhoosh + AnkiDroid side-by-side. Shifts and steering route to `127.0.0.1` via OpenBikeControl (or MyShift tap fallback); `A/B/Y/Z` clicks native AnkiDroid review buttons. |
-| **Mode 2: Tablet AnkiDroid + Phone MyWhoosh** | Runs AnkiDroid full-screen on Tablet; MyWhoosh full-screen on a second device (e.g., Pixel 10). Shifts and steering route over Wi-Fi LAN to MyWhoosh via OpenBikeControl with mDNS auto-discovery. |
-| **Mode 3: Anki-Only (Study)** | Disables MyWhoosh output; maps all 10 buttons (single + double + long press) to AnkiDroid review, hint navigation, and audio replay. |
-| **Mode 4: MyWhoosh-Only (Ride)** | Disables AnkiDroid clicking; maps all 10 buttons to MyWhoosh shifting, steering, UI toggle, camera views, powerups, and emotes. |
+| **Mode 1: Tablet Split-Screen** | Runs MyWhoosh + AnkiDroid side-by-side. MyWhoosh connects to `127.0.0.1:21587`; AnkiDroid buttons clicked via AccessibilityService. |
+| **Mode 2: Tablet AnkiDroid + Phone MyWhoosh** | Runs AnkiDroid full-screen on Tablet; MyWhoosh on phone. Phone discovers the Tablet over Wi-Fi LAN via mDNS (`_openbikecontrol._tcp`). |
+| **Mode 3: Anki-Only (Study)** | Disables MyWhoosh output; maps all buttons to AnkiDroid review, hints, and navigation. |
+| **Mode 4: MyWhoosh-Only (Ride)** | Disables AnkiDroid clicking; maps buttons to MyWhoosh shifting, steering, camera, powerup, and emotes. |
 
 ---
 
-## 10-Button Controller Mapping Matrix
+## Button Mapping Proposal
 
-| Button | Inverse Bitmask | Modes 1 & 2 (Combined) | Mode 3 (Anki-Only) | Mode 4 (MyWhoosh-Only) |
-| :--- | :--- | :--- | :--- | :--- |
-| **Right `+` Rocker** | `0x2000` | `SHIFT_UP` | `REPLAY_AUDIO` | `SHIFT_UP` |
-| **Right `+` Double-Press** | `0x2000` (Right-Pod-Only) | `SHIFT_DOWN` | `BURY_CARD` | `SHIFT_DOWN` |
-| **Left `–` Rocker** | `0x0400` | `SHIFT_DOWN` | `UNDO` | `SHIFT_DOWN` |
-| **Right `A` (Bottom)** | `0x0010` | Flip / `EASE_3_GOOD` | Flip / `EASE_3_GOOD` | `SELECT` |
-| **Right `B` (Right)** | `0x0020` | Flip / `EASE_2_HARD` | Flip / `EASE_2_HARD` | `BACK` |
-| **Right `Y` (Left)** | `0x0040` | Flip / `EASE_1_AGAIN` | Flip / `EASE_1_AGAIN` | `TOGGLE_UI` |
-| **Right `Z` (Top)** | `0x0100` | Flip / `EASE_4_EASY` | Flip / `EASE_4_EASY` | `POWER_UP` |
-| **Right `Z` Long Press** | `0x0100` (500ms) | `UNDO` | `UNDO` | `SCREENSHOT` |
-| **Left D-Pad `◀`** | `0x0001` | `STEER_LEFT` | `PREV_HINT` | `STEER_LEFT` |
-| **Left D-Pad `▶`** | `0x0004` | `STEER_RIGHT` | `NEXT_HINT` | `STEER_RIGHT` |
-| **Left D-Pad `▲`** | `0x0002` | `TOGGLE_UI` | `REPLAY_AUDIO` | `CAMERA_VIEW` |
-| **Left D-Pad `▼`** | `0x0008` | `EMOTE` | `BURY_CARD` | `EMOTE` |
-
----
-
-## Security Invariants (`SG-0` through `SG-4`)
-
-- **SG-0**: Strict write isolation and pinned dependency versions (no dynamic `+`).
-- **SG-1**: Protobuf `0x23` parser validates bounds (`MAX_PACKET_SIZE = 64`, `MAX_VARINT_BYTES = 5`) and handles 10,000 malformed fuzzed inputs with zero exceptions.
-- **SG-2**: Accessibility service strictly pinned to `com.ichi2.anki` and `com.mywhoosh.whooshgame`, aborts if `isPassword == true`, and rejects external `onStartCommand` intents.
-- **SG-3**: All services and receivers declared with `android:exported="false"`; internal events use in-process Kotlin flows.
-- **SG-4**: Destination IP validator strictly allows only `127.0.0.1` or RFC1918 site-local addresses (`isLoopbackAddress || isSiteLocalAddress`); global network config disables cleartext HTTP traffic.
+| Button | Gesture | 1-Pod Default (`rightPodOnlyNoZwift = true`) | 2-Pod Full Mode (`rightPodOnlyNoZwift = false`) | Mode 3 (Anki-Only) | Mode 4 (MyWhoosh-Only) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Right `+` Rocker** | Single Click | **Shift Up (`0x01`)** | **Shift Up (`0x01`)** | Flip / Good (`3`) | Shift Up (`0x01`) |
+| **Right `+` Rocker** | Long Press (450ms) | **Shift Down (`0x02`)** | Shift Up (+2) | Undo | Shift Down (`0x02`) |
+| **Right `Z` (Top)** | Single Click | **Shift Down (`0x02`)** | **Flip / Easy (`4`)** | Flip / Easy (`4`) | Shift Down (`0x02`) |
+| **Right `Z` (Top)** | Long Press (450ms) | **Undo** | **Undo** | Undo | Screenshot (`0x24`) |
+| **Right `A` (Bottom)** | Single Click | **Flip / Good (`3`)** | **Flip / Good (`3`)** | Flip / Good (`3`) | UI Confirm (`0x14`) |
+| **Right `A` (Bottom)** | Long Press (450ms) | **Flip / Easy (`4`)** | **Flip / Easy (`4`)** | Flip / Easy (`4`) | Power-up (`0x50`) |
+| **Right `B` (Right)** | Single Click | **Flip / Hard (`2`)** | **Flip / Hard (`2`)** | Flip / Hard (`2`) | UI Back (`0x15`) |
+| **Right `Y` (Left)** | Single Click | **Flip / Again (`1`)** | **Flip / Again (`1`)** | Flip / Again (`1`) | HUD Toggle (`0x44`) |
+| **Right `Y` (Left)** | Long Press (450ms) | **Undo** | **Undo** | Undo | Emote (`0x20`) |
+| **Left `–` Rocker** | Single Click | *(Ignored)* | **Shift Down (`0x02`)** | Undo | Shift Down (`0x02`) |
+| **Left D-Pad `◀` / `▶`** | Single / Hold | *(Ignored)* | **Steer Left / Right (`0x18`/`0x19`)** | Flip Card | Steer Left / Right |
+| **Left D-Pad `▲` / `▼`** | Single Click | *(Ignored)* | **Camera (`0x40`) / Emote (`0x20`)** | Undo | Camera / Emote |
 
 ---
 

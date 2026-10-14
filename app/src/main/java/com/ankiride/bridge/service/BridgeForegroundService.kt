@@ -1,6 +1,5 @@
 package com.ankiride.bridge.service
 
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -15,7 +14,8 @@ import com.ankiride.bridge.anki.AnkiActionDispatcherImpl
 import com.ankiride.bridge.ble.ZwiftBleController
 import com.ankiride.bridge.core.AppConfiguration
 import com.ankiride.bridge.core.BleConnectionState
-import com.ankiride.bridge.mywhoosh.MyWhooshNetworkDispatcher
+import com.ankiride.bridge.mywhoosh.MyWhooshNetworkDispatcherImpl
+import com.ankiride.bridge.mywhoosh.OpenBikeControlClient
 import com.ankiride.bridge.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,7 +38,7 @@ class BridgeForegroundService : Service() {
         private val _isRunningFlow = MutableStateFlow(false)
         val isRunningFlow: StateFlow<Boolean> = _isRunningFlow.asStateFlow()
 
-        private val _connectionStateFlow = MutableStateFlow<BleConnectionState>(BleConnectionState.Disconnected)
+        private val _connectionStateFlow = MutableStateFlow(BleConnectionState.DISCONNECTED)
         val connectionStateFlow: StateFlow<BleConnectionState> = _connectionStateFlow.asStateFlow()
 
         var currentConfig: AppConfiguration = AppConfiguration()
@@ -67,7 +67,8 @@ class BridgeForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private var bleController: ZwiftBleController? = null
-    private var myWhooshDispatcher: MyWhooshNetworkDispatcher? = null
+    private var openBikeServer: OpenBikeControlClient? = null
+    private var myWhooshDispatcher: MyWhooshNetworkDispatcherImpl? = null
     private var ankiDispatcher: AnkiActionDispatcherImpl? = null
     private var actionRouter: ActionRouter? = null
 
@@ -101,8 +102,8 @@ class BridgeForegroundService : Service() {
         )
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("AnkiRide Bridge Running")
-            .setContentText("Routing Zwift Click to AnkiDroid & MyWhoosh")
+            .setContentTitle("AnkiRide Bridge Active")
+            .setContentText("OpenBikeControl server + Zwift Click controller running")
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -122,16 +123,23 @@ class BridgeForegroundService : Service() {
     private fun startBridge() {
         _isRunningFlow.value = true
 
-        val ble = ZwiftBleController(this, serviceScope)
-        val whoosh = MyWhooshNetworkDispatcher(serviceProvider = { BridgeAccessibilityService.activeInstance })
+        val server = OpenBikeControlClient(this, serviceScope)
+        openBikeServer = server
+        server.startServer(currentConfig.openBikeServerPort)
+
+        val whoosh = MyWhooshNetworkDispatcherImpl(
+            client = server,
+            accessibilityServiceSupplier = { BridgeAccessibilityService.activeInstance }
+        )
         val anki = AnkiActionDispatcherImpl(serviceProvider = { BridgeAccessibilityService.activeInstance })
         val router = ActionRouter(
-            bleController = ble,
+            scope = serviceScope,
+            configSupplier = { currentConfig },
             ankiDispatcher = anki,
-            myWhooshDispatcher = whoosh,
-            config = currentConfig
+            myWhooshDispatcher = whoosh
         )
 
+        val ble = ZwiftBleController(this, serviceScope)
         bleController = ble
         myWhooshDispatcher = whoosh
         ankiDispatcher = anki
@@ -143,22 +151,27 @@ class BridgeForegroundService : Service() {
             }
         }
 
-        router.start(serviceScope)
-        ble.start(currentConfig)
+        serviceScope.launch {
+            ble.gestureEvents.collect { event ->
+                router.routeGesture(event)
+            }
+        }
+
+        ble.startScanAndConnect(currentConfig)
     }
 
     private fun stopBridge() {
-        actionRouter?.stop()
-        bleController?.stop()
-        myWhooshDispatcher?.close()
+        bleController?.disconnect()
+        openBikeServer?.stopServer()
 
         bleController = null
+        openBikeServer = null
         myWhooshDispatcher = null
         ankiDispatcher = null
         actionRouter = null
 
         _isRunningFlow.value = false
-        _connectionStateFlow.value = BleConnectionState.Disconnected
+        _connectionStateFlow.value = BleConnectionState.DISCONNECTED
     }
 
     override fun onDestroy() {
@@ -174,7 +187,7 @@ class BridgeForegroundService : Service() {
                 "AnkiRide Bridge Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Keeps AnkiRide BLE routing alive in background"
+                description = "Keeps AnkiRide OpenBikeControl server and BLE routing alive in background"
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)

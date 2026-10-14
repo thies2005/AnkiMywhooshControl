@@ -5,11 +5,12 @@ import com.ankiride.bridge.core.AnkiAction
 import com.ankiride.bridge.core.AnkiActionDispatcher
 
 class AnkiActionDispatcherImpl(
+    private val bridge: AnkiAccessibilityBridge = AnkiAccessibilityBridge(),
     private val serviceProvider: () -> AccessibilityService?
 ) : AnkiActionDispatcher {
 
-    override suspend fun dispatch(action: AnkiAction): Boolean {
+    override fun dispatch(action: AnkiAction): Boolean {
         val service = serviceProvider() ?: return false
-        return AnkiAccessibilityBridge.performAnkiAction(service, action)
+        return bridge.performAnkiAction(service, action)
     }
 }

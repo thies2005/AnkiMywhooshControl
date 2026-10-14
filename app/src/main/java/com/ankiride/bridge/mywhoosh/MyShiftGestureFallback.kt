@@ -13,7 +13,7 @@ object MyShiftGestureFallback {
     const val MYWHOOSH_PACKAGE = "com.mywhoosh.whooshgame"
     const val TAP_DURATION_MS = 15L
 
-    fun performShiftTap(
+    fun performTouchAction(
         service: AccessibilityService,
         action: MyWhooshAction,
         config: AppConfiguration
