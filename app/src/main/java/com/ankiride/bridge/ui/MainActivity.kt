@@ -142,36 +142,6 @@ fun areBlePermissionsGranted(context: Context): Boolean {
     }
 }
 
-private const val PREFS_NAME = "ankiride_prefs"
-private const val KEY_CUSTOM_BINDINGS = "custom_button_bindings"
-
-private fun loadSavedCustomBindings(context: Context): Map<ButtonBindingKey, MappedTargetAction> {
-    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    val set = prefs.getStringSet(KEY_CUSTOM_BINDINGS, null) ?: return emptyMap()
-    val map = mutableMapOf<ButtonBindingKey, MappedTargetAction>()
-    for (entry in set) {
-        val parts = entry.split("=")
-        if (parts.size == 2) {
-            val keyParts = parts[0].split(":")
-            if (keyParts.size == 2) {
-                try {
-                    val btn = ClickButton.valueOf(keyParts[0])
-                    val press = PressType.valueOf(keyParts[1])
-                    val target = MappedTargetAction.valueOf(parts[1])
-                    map[ButtonBindingKey(btn, press)] = target
-                } catch (_: Exception) {}
-            }
-        }
-    }
-    return map
-}
-
-private fun saveCustomBindings(context: Context, bindings: Map<ButtonBindingKey, MappedTargetAction>) {
-    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    val set = bindings.map { "${it.key.button.name}:${it.key.pressType.name}=${it.value.name}" }.toSet()
-    prefs.edit().putStringSet(KEY_CUSTOM_BINDINGS, set).apply()
-}
-
 @Composable
 fun AnkiRideDashboard(
     permissionRefreshCount: Int,
@@ -193,7 +163,7 @@ fun AnkiRideDashboard(
     var useZForShiftDown by remember { mutableStateOf(true) }
     var useTouchFallback by remember { mutableStateOf(true) }
     var lockToConnectedPods by remember { mutableStateOf(false) }
-    var customBindings by remember { mutableStateOf(loadSavedCustomBindings(context)) }
+    var customBindings by remember { mutableStateOf(ButtonMappingStore.loadBindings(context)) }
 
     // Reactive permission states updated on ON_RESUME and when service state changes
     var a11yEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled(context)) }
@@ -396,21 +366,12 @@ fun AnkiRideDashboard(
 
             // 5. Custom Button Mapping Editor
             CustomButtonMappingCard(
+                activeMode = selectedMode,
                 rightPodOnly = rightPodOnly,
                 customBindings = customBindings,
-                onUpdateBinding = { key, target ->
-                    val updated = if (target == null) {
-                        customBindings - key
-                    } else {
-                        customBindings + (key to target)
-                    }
+                onUpdateBindings = { updated ->
                     customBindings = updated
-                    saveCustomBindings(context, updated)
-                },
-                onResetAll = {
-                    customBindings = emptyMap()
-                    saveCustomBindings(context, emptyMap())
-                    DiagnosticLogger.info(LogCategory.ROUTER, "Reset all custom button bindings to default preset")
+                    ButtonMappingStore.saveBindings(context, updated)
                 }
             )
 
@@ -664,114 +625,238 @@ fun PodBadge(label: String, connected: Boolean) {
 
 @Composable
 fun CustomButtonMappingCard(
+    activeMode: OperatingMode,
     rightPodOnly: Boolean,
-    customBindings: Map<ButtonBindingKey, MappedTargetAction>,
-    onUpdateBinding: (ButtonBindingKey, MappedTargetAction?) -> Unit,
-    onResetAll: () -> Unit
+    customBindings: Map<ModeButtonBindingKey, MappedTargetAction>,
+    onUpdateBindings: (Map<ModeButtonBindingKey, MappedTargetAction>) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var editingMode by remember(activeMode) { mutableStateOf(activeMode) }
     val buttonsToConfigure = remember(rightPodOnly) {
-        val coreRight = listOf(ClickButton.SHIFT_UP_RIGHT, ClickButton.Z, ClickButton.A, ClickButton.B, ClickButton.Y)
-        val coreLeft = listOf(ClickButton.SHIFT_DOWN_LEFT, ClickButton.LEFT, ClickButton.RIGHT, ClickButton.UP, ClickButton.DOWN)
-        if (rightPodOnly) coreRight else coreRight + coreLeft
+        val rightButtons = listOf(
+            ClickButton.Z,
+            ClickButton.A,
+            ClickButton.Y,
+            ClickButton.B,
+            ClickButton.SHIFT_UP_RIGHT
+        )
+        val leftButtons = listOf(
+            ClickButton.SHIFT_DOWN_LEFT,
+            ClickButton.LEFT,
+            ClickButton.RIGHT,
+            ClickButton.UP,
+            ClickButton.DOWN
+        )
+        if (rightPodOnly) rightButtons else rightButtons + leftButtons
     }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { expanded = !expanded },
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Custom Button Mapping (${if (customBindings.isEmpty()) "Using Default Preset" else "${customBindings.size} Custom Overrides"})",
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp
+                        text = "Button Mapping by Mode",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp
                     )
                     Text(
-                        text = if (expanded) "Tap any button below to customize Single Click or Long Press" else "Tap to customize what each controller button triggers",
+                        text = "Each mode saves its own independent button layout",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Text(
-                    text = if (expanded) "Collapse ▲" else "Customize ▼",
-                    color = MaterialTheme.colorScheme.primary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                OutlinedButton(
+                    onClick = {
+                        val cleared = customBindings.filterKeys { it.mode != editingMode }
+                        onUpdateBindings(cleared)
+                        DiagnosticLogger.info(LogCategory.ROUTER, "Reset ${editingMode.shortTitle} bindings to default")
+                    }
+                ) {
+                    Text("Reset Mode", fontSize = 11.sp)
+                }
             }
 
-            if (expanded) {
+            // 1. Mode Tab Bar to select which mode's buttons to customize
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                OperatingMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = editingMode == mode,
+                        onClick = { editingMode = mode },
+                        label = {
+                            Text(
+                                text = if (mode == activeMode) "★ ${mode.shortTitle}" else mode.shortTitle,
+                                fontSize = 12.sp,
+                                fontWeight = if (editingMode == mode) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    )
+                }
+            }
+
+            // 2. Quick 1-Tap Presets for Combined Modes (Right Pod 4 Colorful Buttons)
+            if (editingMode == OperatingMode.MODE_1_TABLET_SPLIT_SCREEN ||
+                editingMode == OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedButton(onClick = onResetAll) {
-                        Text("Reset All to Default Preset", fontSize = 12.sp)
+                    OutlinedButton(
+                        onClick = {
+                            val updated = customBindings.toMutableMap()
+                            updated[ModeButtonBindingKey(editingMode, ClickButton.Z, PressType.SINGLE_CLICK)] = MappedTargetAction.MW_SHIFT_UP
+                            updated[ModeButtonBindingKey(editingMode, ClickButton.A, PressType.SINGLE_CLICK)] = MappedTargetAction.MW_SHIFT_DOWN
+                            updated[ModeButtonBindingKey(editingMode, ClickButton.Y, PressType.SINGLE_CLICK)] = MappedTargetAction.ANKI_FLIP_OR_AGAIN
+                            updated[ModeButtonBindingKey(editingMode, ClickButton.B, PressType.SINGLE_CLICK)] = MappedTargetAction.ANKI_FLIP_OR_GOOD
+                            onUpdateBindings(updated)
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Preset: Z/A Shift • Y/B Anki", fontSize = 11.sp)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val updated = customBindings.toMutableMap()
+                            updated[ModeButtonBindingKey(editingMode, ClickButton.Z, PressType.SINGLE_CLICK)] = MappedTargetAction.MW_SHIFT_UP
+                            updated[ModeButtonBindingKey(editingMode, ClickButton.B, PressType.SINGLE_CLICK)] = MappedTargetAction.MW_SHIFT_DOWN
+                            updated[ModeButtonBindingKey(editingMode, ClickButton.Y, PressType.SINGLE_CLICK)] = MappedTargetAction.ANKI_FLIP_OR_AGAIN
+                            updated[ModeButtonBindingKey(editingMode, ClickButton.A, PressType.SINGLE_CLICK)] = MappedTargetAction.ANKI_FLIP_OR_GOOD
+                            onUpdateBindings(updated)
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Preset: Z/B Shift • Y/A Anki", fontSize = 11.sp)
                     }
                 }
+            }
 
-                buttonsToConfigure.forEach { button ->
-                    ButtonBindingRow(
-                        button = button,
-                        pressType = PressType.SINGLE_CLICK,
-                        currentOverride = customBindings[ButtonBindingKey(button, PressType.SINGLE_CLICK)],
-                        onSelect = { onUpdateBinding(ButtonBindingKey(button, PressType.SINGLE_CLICK), it) }
-                    )
-                    ButtonBindingRow(
-                        button = button,
-                        pressType = PressType.LONG_PRESS,
-                        currentOverride = customBindings[ButtonBindingKey(button, PressType.LONG_PRESS)],
-                        onSelect = { onUpdateBinding(ButtonBindingKey(button, PressType.LONG_PRESS), it) }
-                    )
-                }
+            // 3. Color-Coded Button Cards showing Single Press & Long Press for editingMode
+            buttonsToConfigure.forEach { button ->
+                ColorCodedButtonCard(
+                    mode = editingMode,
+                    button = button,
+                    customBindings = customBindings,
+                    onSelectAction = { pressType, target ->
+                        val key = ModeButtonBindingKey(editingMode, button, pressType)
+                        val updated = if (target == null) {
+                            customBindings - key
+                        } else {
+                            customBindings + (key to target)
+                        }
+                        onUpdateBindings(updated)
+                    }
+                )
             }
         }
     }
 }
 
 @Composable
-fun ButtonBindingRow(
+fun ColorCodedButtonCard(
+    mode: OperatingMode,
     button: ClickButton,
-    pressType: PressType,
-    currentOverride: MappedTargetAction?,
+    customBindings: Map<ModeButtonBindingKey, MappedTargetAction>,
+    onSelectAction: (PressType, MappedTargetAction?) -> Unit
+) {
+    val singleResolved = ButtonMappingStore.resolveAction(mode, button, PressType.SINGLE_CLICK, customBindings)
+    val longResolved = ButtonMappingStore.resolveAction(mode, button, PressType.LONG_PRESS, customBindings)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .background(Color(button.badgeColorHex), shape = RoundedCornerShape(8.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = button.shortBadge,
+                        color = Color.White,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 15.sp
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = button.displayName,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
+
+            GestureActionPickerRow(
+                gestureLabel = "Single Press",
+                resolvedAction = singleResolved,
+                isCustom = customBindings.containsKey(ModeButtonBindingKey(mode, button, PressType.SINGLE_CLICK)),
+                onSelect = { onSelectAction(PressType.SINGLE_CLICK, it) }
+            )
+
+            GestureActionPickerRow(
+                gestureLabel = "Long Press (450ms)",
+                resolvedAction = longResolved,
+                isCustom = customBindings.containsKey(ModeButtonBindingKey(mode, button, PressType.LONG_PRESS)),
+                onSelect = { onSelectAction(PressType.LONG_PRESS, it) }
+            )
+        }
+    }
+}
+
+@Composable
+fun GestureActionPickerRow(
+    gestureLabel: String,
+    resolvedAction: MappedTargetAction,
+    isCustom: Boolean,
     onSelect: (MappedTargetAction?) -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    val gestureLabel = if (pressType == PressType.SINGLE_CLICK) "Single Click" else "Long Press (450ms)"
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
+        modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text("${button.displayName} • $gestureLabel", fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Text(
-                text = currentOverride?.label ?: "Default Mode Mapping",
+                text = gestureLabel,
                 fontSize = 11.sp,
-                color = if (currentOverride != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = resolvedAction.label,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = when {
+                    resolvedAction.myWhooshAction != null -> Color(0xFF64B5F6)
+                    resolvedAction.ankiAction != null -> Color(0xFF81C784)
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
             )
         }
         Box {
             OutlinedButton(onClick = { menuExpanded = true }) {
-                Text(if (currentOverride != null) "Change" else "Default", fontSize = 12.sp)
+                Text(if (isCustom) "Custom ▾" else "Change ▾", fontSize = 11.sp)
             }
             DropdownMenu(
                 expanded = menuExpanded,
                 onDismissRequest = { menuExpanded = false }
             ) {
                 DropdownMenuItem(
-                    text = { Text("Use Default Mode Mapping") },
+                    text = { Text("Reset to Mode Default") },
                     onClick = {
                         onSelect(null)
                         menuExpanded = false

@@ -14,22 +14,10 @@ class MyWhooshNetworkDispatcherImpl(
 ) : MyWhooshActionDispatcher {
 
     override suspend fun dispatch(action: MyWhooshAction, config: AppConfiguration): Boolean {
-        var deliveredNetwork = false
-
-        // 1. Send official binary OpenBikeControl packet (0x01) to connected MyWhoosh client (Tablet or Pixel 10)
-        if (client.hasConnectedClients()) {
-            deliveredNetwork = client.sendAction("127.0.0.1", config.openBikeServerPort, action)
-        } else {
-            DiagnosticLogger.warn(
-                LogCategory.MYWHOOSH,
-                "No OpenBikeControl TCP client connected yet for $action (tap OpenBikeControl icon in MyWhoosh Connection Screen)"
-            )
-        }
-
-        // 2. Also perform on-screen MyShift tap in Tablet Modes if enabled (for SHIFT_UP / SHIFT_DOWN)
         val isTabletMyWhoosh = config.mode == OperatingMode.MODE_1_TABLET_SPLIT_SCREEN ||
             config.mode == OperatingMode.MODE_4_MYWHOOSH_ONLY
 
+        // 1. Fire immediate 0ms-latency on-screen MyShift touch tap first in Tablet Modes
         var deliveredTouch = false
         if (isTabletMyWhoosh && config.useMyShiftTouchFallbackWhenNoClient &&
             (action == MyWhooshAction.SHIFT_UP || action == MyWhooshAction.SHIFT_DOWN)
@@ -37,9 +25,17 @@ class MyWhooshNetworkDispatcherImpl(
             val service = accessibilityServiceSupplier()
             if (service != null) {
                 deliveredTouch = MyShiftGestureFallback.performTouchAction(service, action, config)
+            } else {
+                DiagnosticLogger.warn(LogCategory.MYWHOOSH, "AccessibilityService not active for MyShift touch tap")
             }
         }
 
-        return deliveredNetwork || deliveredTouch
+        // 2. Also send official binary OpenBikeControl packet (0x01) if a client is connected
+        var deliveredNetwork = false
+        if (client.hasConnectedClients()) {
+            deliveredNetwork = client.sendAction("127.0.0.1", config.openBikeServerPort, action)
+        }
+
+        return deliveredTouch || deliveredNetwork
     }
 }

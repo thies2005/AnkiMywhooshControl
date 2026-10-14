@@ -11,7 +11,7 @@ import com.ankiride.bridge.core.MyWhooshAction
 
 object MyShiftGestureFallback {
     const val MYWHOOSH_PACKAGE = "com.mywhoosh.whooshgame"
-    const val TAP_DURATION_MS = 25L
+    const val TAP_DURATION_MS = 75L
 
     fun performTouchAction(
         service: AccessibilityService,
