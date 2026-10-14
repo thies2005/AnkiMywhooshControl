@@ -4,10 +4,20 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
 enum class OperatingMode {
-    MODE_1_TABLET_BOTH,
+    MODE_1_TABLET_SPLIT_SCREEN,
     MODE_2_TABLET_ANKI_PHONE_MYWHOOSH,
     MODE_3_ANKI_ONLY,
     MODE_4_MYWHOOSH_ONLY
+}
+
+enum class BleConnectionState {
+    DISCONNECTED,
+    SCANNING,
+    CONNECTING,
+    HANDSHAKING,
+    CONNECTED_RIGHT_ONLY,
+    CONNECTED_BOTH_PODS,
+    ERROR
 }
 
 enum class ClickButton(val bitmask: Int) {
@@ -30,78 +40,68 @@ enum class ClickButton(val bitmask: Int) {
 }
 
 enum class PressType {
-    SINGLE_PRESS,
-    DOUBLE_PRESS,
+    SINGLE_CLICK,
     LONG_PRESS
 }
 
 data class ButtonGestureEvent(
     val button: ClickButton,
-    val pressType: PressType,
-    val timestampMs: Long
+    val type: PressType,
+    val timestampMs: Long = System.currentTimeMillis()
 )
 
 enum class AnkiAction {
-    FLIP_OR_EASE_1_AGAIN,
-    FLIP_OR_EASE_2_HARD,
-    FLIP_OR_EASE_3_GOOD,
-    FLIP_OR_EASE_4_EASY,
-    UNDO,
-    BURY_CARD,
-    REPLAY_AUDIO,
-    PREV_HINT,
-    NEXT_HINT
+    FLIP_OR_AGAIN,
+    FLIP_OR_HARD,
+    FLIP_OR_GOOD,
+    FLIP_OR_EASY,
+    FLIP_CARD,
+    UNDO
 }
 
-enum class MyWhooshAction {
-    SHIFT_UP,
-    SHIFT_DOWN,
-    STEER_LEFT,
-    STEER_RIGHT,
-    TOGGLE_UI,
-    EMOTE,
-    CAMERA_VIEW,
-    SELECT,
-    BACK,
-    POWER_UP,
-    SCREENSHOT
+enum class MyWhooshAction(val openBikeOpcode: Byte) {
+    SHIFT_UP(0x01),
+    SHIFT_DOWN(0x02),
+    UI_NAV_UP(0x10),
+    UI_NAV_DOWN(0x11),
+    UI_NAV_LEFT(0x12),
+    UI_NAV_RIGHT(0x13),
+    UI_CONFIRM(0x14),
+    UI_BACK(0x15),
+    PAUSE_MENU(0x16),
+    STEER_LEFT(0x18),
+    STEER_RIGHT(0x19),
+    EMOTE(0x20),
+    SCREENSHOT(0x24),
+    TOGGLE_CAMERA(0x40),
+    HUD_TOGGLE(0x44),
+    USE_POWERUP(0x50)
 }
 
 data class AppConfiguration(
-    val mode: OperatingMode = OperatingMode.MODE_1_TABLET_BOTH,
-    val rightPodOnlyMode: Boolean = false,
+    val mode: OperatingMode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
+    val rightPodOnlyNoZwift: Boolean = true,
+    val useZForShiftDownInSinglePodMode: Boolean = true,
     val leftPodAutoReconnectSec: Int = 55,
-    val targetMyWhooshHost: String = "127.0.0.1",
-    val targetMyWhooshPort: Int = 21587,
-    val useAccessibilityTapFallbackForMyWhoosh: Boolean = false,
+    val openBikeServerPort: Int = 21587,
+    val useMyShiftTouchFallbackWhenNoClient: Boolean = true,
     val myShiftUpNormalizedX: Float = 0.92f,
     val myShiftUpNormalizedY: Float = 0.85f,
     val myShiftDownNormalizedX: Float = 0.84f,
     val myShiftDownNormalizedY: Float = 0.85f,
-    val pinnedLeftPodMac: String? = null,
-    val pinnedRightPodMac: String? = null
+    val pinnedRightPodMac: String? = null,
+    val pinnedLeftPodMac: String? = null
 )
-
-sealed interface BleConnectionState {
-    data object Disconnected : BleConnectionState
-    data object Scanning : BleConnectionState
-    data class Connected(
-        val leftPodConnected: Boolean,
-        val rightPodConnected: Boolean,
-        val batteryPercent: Int? = null
-    ) : BleConnectionState
-    data class Error(val reason: String) : BleConnectionState
-}
 
 interface ClickBleController {
     val connectionState: StateFlow<BleConnectionState>
     val gestureEvents: SharedFlow<ButtonGestureEvent>
-    fun start(config: AppConfiguration)
-    fun stop()
+    fun startScanAndConnect(config: AppConfiguration)
+    fun disconnect()
 }
 
 interface AnkiActionDispatcher {
-    suspend fun dispatch(action: AnkiAction): Boolean
+    fun dispatch(action: AnkiAction): Boolean
 }
 
 interface MyWhooshActionDispatcher {
