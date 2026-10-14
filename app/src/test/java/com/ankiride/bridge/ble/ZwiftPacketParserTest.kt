@@ -68,6 +68,37 @@ class ZwiftPacketParserTest {
     }
 
     @Test
+    fun testPhysicalZButtonPacketFromTabletLog() {
+        // Exact packet logged from physical Zwift Click v2 when pressing Z:
+        // [23 08 FF FE FF FF 0F] -> activeMask=0x00080 (Bit 7)
+        val packet = byteArrayOf(
+            0x23, 0x08,
+            0xFF.toByte(), 0xFE.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0x0F
+        )
+        val parsedMask = ZwiftPacketParser.parseActiveButtonMask(packet)
+        assertNotNull(parsedMask)
+        assertEquals(ClickButton.Z.bitmask, parsedMask)
+
+        val buttonMap = ZwiftPacketParser.parse(packet)
+        assertTrue(buttonMap[ClickButton.Z] == true)
+        assertTrue(buttonMap[ClickButton.A] == false)
+        assertTrue(buttonMap[ClickButton.B] == false)
+        assertTrue(buttonMap[ClickButton.Y] == false)
+    }
+
+    @Test
+    fun testLegacy0x37ShiftPackets() {
+        // Legacy 0x37 Click packets
+        val shiftUpPacket = byteArrayOf(0x37, 0x08, 0x00)
+        val shiftUpMask = ZwiftPacketParser.parseActiveButtonMask(shiftUpPacket)
+        assertEquals(ClickButton.SHIFT_UP_RIGHT.bitmask, shiftUpMask)
+
+        val shiftDownPacket = byteArrayOf(0x37, 0x08, 0x01)
+        val shiftDownMask = ZwiftPacketParser.parseActiveButtonMask(shiftDownPacket)
+        assertEquals(ClickButton.SHIFT_DOWN_LEFT.bitmask, shiftDownMask)
+    }
+
+    @Test
     fun testNoButtonsPressed() {
         // When no button is pressed, wire value has all 1s (0xFFFFFFFF or ~0).
         val wireValue = 0.inv()

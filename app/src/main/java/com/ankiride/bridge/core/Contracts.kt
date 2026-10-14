@@ -20,23 +20,36 @@ enum class BleConnectionState {
     ERROR
 }
 
+/**
+ * Hardware-verified Zwift Click v2 / Ride 0x23 inverse bitmasks.
+ * Note: Bit 7 (0x0080) is the physical Right 'Z' button (verified from packet [23 08 FF FE FF FF 0F]).
+ * Both shifted and unshifted upper bit positions are mapped so all Click v2 and Ride firmware versions work.
+ */
 enum class ClickButton(val bitmask: Int, val displayName: String, val isRightPod: Boolean) {
-    SHIFT_UP_RIGHT(0x2000, "Right Top '+' Rocker", true),
-    Z(0x0100, "Right 'Z' (Top)", true),
-    A(0x0010, "Right 'A' (Bottom)", true),
-    B(0x0020, "Right 'B' (Right)", true),
-    Y(0x0040, "Right 'Y' (Left)", true),
-    SHIFT_DOWN_LEFT(0x0400, "Left Top '–' Rocker", false),
     LEFT(0x0001, "Left D-Pad ◀", false),
     UP(0x0002, "Left D-Pad ▲", false),
     RIGHT(0x0004, "Left D-Pad ▶", false),
     DOWN(0x0008, "Left D-Pad ▼", false),
-    SHIFT_UP_LEFT(0x0200, "Left Aux Shift Up", false),
-    POWERUP_LEFT(0x0800, "Left PowerUp", false),
-    ONOFF_LEFT(0x1000, "Left On/Off", false),
-    SHIFT_DOWN_RIGHT(0x4000, "Right Aux Shift Down", true),
-    POWERUP_RIGHT(0x10000, "Right PowerUp", true),
-    ONOFF_RIGHT(0x20000, "Right On/Off", true)
+    A(0x0010, "Right 'A' (Bottom)", true),
+    B(0x0020, "Right 'B' (Right)", true),
+    Y(0x0040, "Right 'Y' (Left)", true),
+    Z(0x0080, "Right 'Z' (Top)", true),
+    SHIFT_UP_LEFT(0x0100, "Left Shift Up (Bit 8)", false),
+    SHIFT_DOWN_LEFT(0x0200, "Left '–' Rocker (Bit 9)", false),
+    SHIFT_DOWN_LEFT_ALT(0x0400, "Left '–' Rocker (Bit 10)", false),
+    POWERUP_LEFT(0x0800, "Left PowerUp (Bit 11)", false),
+    SHIFT_UP_RIGHT(0x1000, "Right '+' Rocker (Bit 12)", true),
+    SHIFT_UP_RIGHT_ALT(0x2000, "Right '+' Rocker (Bit 13)", true),
+    SHIFT_DOWN_RIGHT(0x4000, "Right Aux Shift (Bit 14)", true),
+    POWERUP_RIGHT(0x8000, "Right PowerUp (Bit 15)", true),
+    ONOFF_LEFT(0x10000, "Left On/Off (Bit 16)", false),
+    ONOFF_RIGHT(0x20000, "Right On/Off (Bit 17)", true);
+
+    val isShiftUpButton: Boolean
+        get() = this == SHIFT_UP_RIGHT || this == SHIFT_UP_RIGHT_ALT || this == SHIFT_UP_LEFT || this == ONOFF_RIGHT
+
+    val isShiftDownButton: Boolean
+        get() = this == SHIFT_DOWN_LEFT || this == SHIFT_DOWN_LEFT_ALT || this == SHIFT_DOWN_RIGHT || this == ONOFF_LEFT
 }
 
 enum class PressType {
@@ -78,10 +91,6 @@ enum class MyWhooshAction(val openBikeOpcode: Byte, val displayName: String) {
     USE_POWERUP(0x50, "MyWhoosh: Use Power-Up")
 }
 
-/**
- * Unified custom assignable action so the user can bind any button (Single or Long Press)
- * to any Anki or MyWhoosh command in the UI.
- */
 enum class MappedTargetAction(
     val label: String,
     val ankiAction: AnkiAction? = null,

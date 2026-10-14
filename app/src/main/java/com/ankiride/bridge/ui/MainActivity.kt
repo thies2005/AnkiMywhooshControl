@@ -828,6 +828,25 @@ fun DiagnosticLogCard() {
                 }
             }
 
+            // Quick MyWhoosh Shift Test Bar
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { BridgeForegroundService.triggerTestShift(MyWhooshAction.SHIFT_DOWN) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Test Shift Down (–)", fontSize = 12.sp)
+                }
+                OutlinedButton(
+                    onClick = { BridgeForegroundService.triggerTestShift(MyWhooshAction.SHIFT_UP) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Test Shift Up (+)", fontSize = 12.sp)
+                }
+            }
+
             // Action Buttons: Copy, Clear, Inspect Windows
             Row(
                 modifier = Modifier.fillMaxWidth(),

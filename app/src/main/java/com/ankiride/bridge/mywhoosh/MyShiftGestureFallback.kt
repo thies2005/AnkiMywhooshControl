@@ -4,14 +4,14 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.graphics.Rect
-import android.util.Log
 import com.ankiride.bridge.core.AppConfiguration
+import com.ankiride.bridge.core.DiagnosticLogger
+import com.ankiride.bridge.core.LogCategory
 import com.ankiride.bridge.core.MyWhooshAction
 
 object MyShiftGestureFallback {
-    private const val TAG = "MyShiftGestureFallback"
     const val MYWHOOSH_PACKAGE = "com.mywhoosh.whooshgame"
-    const val TAP_DURATION_MS = 15L
+    const val TAP_DURATION_MS = 25L
 
     fun performTouchAction(
         service: AccessibilityService,
@@ -48,9 +48,14 @@ object MyShiftGestureFallback {
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
 
         return try {
-            service.dispatchGesture(gesture, null, null)
+            val dispatched = service.dispatchGesture(gesture, null, null)
+            DiagnosticLogger.info(
+                LogCategory.MYWHOOSH,
+                "MyShift Touch Tap for $action at (${tapX.toInt()}, ${tapY.toInt()}) in window=$bounds -> dispatched=$dispatched"
+            )
+            dispatched
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to dispatch gesture tap for MyShift", e)
+            DiagnosticLogger.error(LogCategory.MYWHOOSH, "MyShift Touch Tap failed: ${e.message}")
             false
         }
     }

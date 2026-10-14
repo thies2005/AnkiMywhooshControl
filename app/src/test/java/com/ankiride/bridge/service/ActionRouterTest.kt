@@ -380,4 +380,38 @@ class ActionRouterTest {
         testScheduler.advanceUntilIdle()
         assertEquals(listOf(MyWhooshAction.STEER_LEFT), myWhooshDispatcher.dispatchedActions)
     }
+
+    @Test
+    fun testMode4MyWhooshOnlyRoutingSinglePodDefault() = runTest {
+        val config = AppConfiguration(
+            mode = OperatingMode.MODE_4_MYWHOOSH_ONLY,
+            rightPodOnlyNoZwift = true
+        )
+        val router = ActionRouter(
+            scope = this,
+            configSupplier = { config },
+            ankiDispatcher = ankiDispatcher,
+            myWhooshDispatcher = myWhooshDispatcher
+        )
+
+        // In 1-pod Mode 4: A & + shift UP, B & Z & - shift DOWN
+        router.routeGesture(ButtonGestureEvent(ClickButton.A, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.B, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.Z, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.SHIFT_UP_RIGHT, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.SHIFT_UP_RIGHT, PressType.LONG_PRESS))
+
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(
+            listOf(
+                MyWhooshAction.SHIFT_UP,
+                MyWhooshAction.SHIFT_DOWN,
+                MyWhooshAction.SHIFT_DOWN,
+                MyWhooshAction.SHIFT_UP,
+                MyWhooshAction.SHIFT_DOWN
+            ),
+            myWhooshDispatcher.dispatchedActions
+        )
+    }
 }

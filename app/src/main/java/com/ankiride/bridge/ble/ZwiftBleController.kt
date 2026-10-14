@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.EnumMap
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -67,6 +68,8 @@ class ZwiftBleController(
 
     private val activeGatts = ConcurrentHashMap<String, BluetoothGatt>()
     private val connectedPods = ConcurrentHashMap<String, Boolean>() // address -> isLeftPod
+    private val podActiveMasks = ConcurrentHashMap<String, Int>() // address -> last activeMask
+    private val lastLoggedPayloadHex = ConcurrentHashMap<String, String>()
     private var leftPodWatchdogJob: Job? = null
     private var currentConfig = AppConfiguration()
     private var isScanning = false
@@ -77,6 +80,11 @@ class ZwiftBleController(
             val address = device.address ?: return
             if (activeGatts.containsKey(address)) return
 
+            // In 1-Pod Mode, once 1 pod is connected (since Click v2 mirrors both pods over 1 link), ignore second pod
+            if (currentConfig.rightPodOnlyNoZwift && activeGatts.isNotEmpty()) {
+                return
+            }
+
             val mfgData = result.scanRecord?.getManufacturerSpecificData(ZWIFT_MANUFACTURER_ID)
             val podType = if (mfgData != null && mfgData.isNotEmpty()) mfgData[0] else null
             val isLeftPod = (podType == DEVICE_ID_LEFT_POD)
@@ -84,15 +92,11 @@ class ZwiftBleController(
                 DEVICE_ID_RIGHT_POD -> "RightPod(0x07)"
                 DEVICE_ID_LEFT_POD -> "LeftPod(0x08)"
                 DEVICE_ID_CLICK -> "Click(0x09)"
-                null -> "UnknownPod"
+                null -> "ZwiftPod"
                 else -> "Pod(0x%02X)".format(podType)
             }
 
             if (currentConfig.rightPodOnlyNoZwift && isLeftPod) {
-                DiagnosticLogger.info(
-                    LogCategory.BLE,
-                    "Ignored Left Pod $address ($podLabel) because 1-Pod Mode (Right Pod Only) is active"
-                )
                 return
             }
 
@@ -102,14 +106,11 @@ class ZwiftBleController(
                 currentConfig.pinnedRightPodMac.isNullOrBlank() && currentConfig.pinnedLeftPodMac.isNullOrBlank() -> true
                 else -> false
             }
-            if (!allowedByPin) {
-                DiagnosticLogger.warn(LogCategory.BLE, "Skipped unpinned BLE device $address ($podLabel)")
-                return
-            }
+            if (!allowedByPin) return
 
             DiagnosticLogger.info(
                 LogCategory.BLE,
-                "Discovered Zwift controller: name=${device.name ?: "N/A"}, mac=$address, pod=$podLabel, rssi=${result.rssi}dBm"
+                "Discovered Zwift controller: name=${device.name ?: "Zwift Click"}, mac=$address, pod=$podLabel, rssi=${result.rssi}dBm"
             )
             connectToDevice(device, isLeftPod = isLeftPod)
         }
@@ -118,6 +119,10 @@ class ZwiftBleController(
             DiagnosticLogger.error(LogCategory.BLE, "BLE Scan failed with errorCode=$errorCode")
             _connectionState.value = BleConnectionState.ERROR
         }
+    }
+
+    fun updateConfiguration(config: AppConfiguration) {
+        currentConfig = config
     }
 
     override fun startScanAndConnect(config: AppConfiguration) {
@@ -144,7 +149,7 @@ class ZwiftBleController(
 
         DiagnosticLogger.info(
             LogCategory.BLE,
-            "Starting BLE scan (1-Pod Right-Only=${config.rightPodOnlyNoZwift}, UUIDs=0xFC82 + Legacy)"
+            "Starting BLE scan (1-Pod Default=${config.rightPodOnlyNoZwift})"
         )
         _connectionState.value = BleConnectionState.SCANNING
         isScanning = true
@@ -153,7 +158,7 @@ class ZwiftBleController(
 
     private fun connectToDevice(device: BluetoothDevice, isLeftPod: Boolean) {
         _connectionState.value = BleConnectionState.CONNECTING
-        DiagnosticLogger.info(LogCategory.BLE, "Connecting GATT to ${device.address} (isLeftPod=$isLeftPod)...")
+        DiagnosticLogger.info(LogCategory.BLE, "Connecting GATT to ${device.address}...")
         val callback = createGattCallback(device, isLeftPod)
         val gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
@@ -166,22 +171,20 @@ class ZwiftBleController(
     }
 
     private fun updateConnectionState() {
-        val hasRight = connectedPods.values.any { !it }
-        val hasLeft = connectedPods.values.any { it }
+        val count = connectedPods.size
         val nextState = when {
-            hasRight && hasLeft -> BleConnectionState.CONNECTED_BOTH_PODS
-            hasRight || hasLeft -> BleConnectionState.CONNECTED_RIGHT_ONLY
+            count >= 2 -> BleConnectionState.CONNECTED_BOTH_PODS
+            count == 1 -> BleConnectionState.CONNECTED_RIGHT_ONLY
             activeGatts.isEmpty() -> BleConnectionState.DISCONNECTED
             else -> BleConnectionState.CONNECTING
         }
         _connectionState.value = nextState
-        DiagnosticLogger.info(LogCategory.BLE, "BLE state updated -> $nextState (right=$hasRight, left=$hasLeft)")
     }
 
     private fun createGattCallback(device: BluetoothDevice, isLeftPod: Boolean) = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED && gatt != null) {
-                DiagnosticLogger.info(LogCategory.BLE, "GATT connected to ${device.address} (status=$status). Discovering services...")
+                DiagnosticLogger.info(LogCategory.BLE, "GATT connected to ${device.address}. Discovering services...")
                 _connectionState.value = BleConnectionState.HANDSHAKING
                 gatt.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -189,33 +192,27 @@ class ZwiftBleController(
                 gatt?.close()
                 activeGatts.remove(device.address)
                 connectedPods.remove(device.address)
+                podActiveMasks.remove(device.address)
                 updateConnectionState()
             }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS || gatt == null) {
-                DiagnosticLogger.error(LogCategory.BLE, "Service discovery failed on ${device.address} (status=$status)")
                 _connectionState.value = BleConnectionState.ERROR
                 return
             }
             val service = gatt.getService(ZWIFT_FC82_SERVICE_UUID)
                 ?: gatt.getService(ZWIFT_LEGACY_SERVICE_UUID)
                 ?: run {
-                    DiagnosticLogger.error(LogCategory.BLE, "Neither 0xFC82 nor legacy Zwift service found on ${device.address}")
                     _connectionState.value = BleConnectionState.ERROR
                     return
                 }
 
-            DiagnosticLogger.info(LogCategory.BLE, "Found Zwift GATT service ${service.uuid} on ${device.address}")
-            val notifyChar = service.getCharacteristic(MEASUREMENT_CHAR_UUID) ?: run {
-                DiagnosticLogger.error(LogCategory.BLE, "Measurement char 0002 not found on ${device.address}")
-                return
-            }
+            val notifyChar = service.getCharacteristic(MEASUREMENT_CHAR_UUID) ?: return
             gatt.setCharacteristicNotification(notifyChar, true)
             val cccd = notifyChar.getDescriptor(CCCD_UUID)
             if (cccd != null) {
-                DiagnosticLogger.info(LogCategory.BLE, "Enabling CCCD notifications on ${device.address}...")
                 writeDescriptorCompat(gatt, cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
             } else {
                 writeRideOnHandshake(gatt, service)
@@ -224,7 +221,6 @@ class ZwiftBleController(
 
         override fun onDescriptorWrite(gatt: BluetoothGatt?, descriptor: BluetoothGattDescriptor?, status: Int) {
             if (gatt == null) return
-            DiagnosticLogger.info(LogCategory.BLE, "CCCD descriptor write completed (status=$status) on ${device.address}. Sending 'RideOn'...")
             val service = gatt.getService(ZWIFT_FC82_SERVICE_UUID)
                 ?: gatt.getService(ZWIFT_LEGACY_SERVICE_UUID)
                 ?: return
@@ -232,21 +228,17 @@ class ZwiftBleController(
         }
 
         override fun onCharacteristicWrite(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?, status: Int) {
-            if (characteristic?.uuid == CONTROL_POINT_CHAR_UUID) {
-                if (status == BluetoothGatt.GATT_SUCCESS) {
-                    connectedPods[device.address] = isLeftPod
-                    if (isLeftPod) {
-                        _lastLeftMac.value = device.address
-                    } else {
-                        _lastRightMac.value = device.address
-                    }
-                    DiagnosticLogger.info(LogCategory.BLE, "'RideOn' handshake succeeded on ${device.address} (isLeftPod=$isLeftPod)")
-                    updateConnectionState()
-                    if (isLeftPod && !currentConfig.rightPodOnlyNoZwift && gatt != null) {
-                        scheduleLeftPodWatchdog(device)
-                    }
-                } else {
-                    DiagnosticLogger.error(LogCategory.BLE, "'RideOn' write failed with status=$status on ${device.address}")
+            if (characteristic?.uuid == CONTROL_POINT_CHAR_UUID && status == BluetoothGatt.GATT_SUCCESS) {
+                connectedPods[device.address] = isLeftPod
+                if (_lastRightMac.value == null) {
+                    _lastRightMac.value = device.address
+                } else if (_lastRightMac.value != device.address) {
+                    _lastLeftMac.value = device.address
+                }
+                DiagnosticLogger.info(LogCategory.BLE, "'RideOn' handshake complete on ${device.address}")
+                updateConnectionState()
+                if (isLeftPod && !currentConfig.rightPodOnlyNoZwift && gatt != null) {
+                    scheduleLeftPodWatchdog(device)
                 }
             }
         }
@@ -255,8 +247,8 @@ class ZwiftBleController(
             handleMeasurementNotification(device.address, characteristic.uuid, value)
         }
 
+        @Suppress("OVERRIDE_DEPRECATION")
         @Deprecated("Deprecated in API 33")
-        @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION")
         override fun onCharacteristicChanged(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?) {
             if (characteristic != null) {
                 @Suppress("DEPRECATION")
@@ -267,21 +259,41 @@ class ZwiftBleController(
     }
 
     private fun handleMeasurementNotification(address: String, charUuid: UUID, value: ByteArray) {
-        if (charUuid == MEASUREMENT_CHAR_UUID && value.isNotEmpty() && value[0] == ZwiftPacketParser.MSG_KEYPAD_STATUS) {
-            val mask = ZwiftPacketParser.parseActiveButtonMask(value)
-            if (mask != null && mask != 0) {
-                val hex = value.joinToString(" ") { "%02X".format(it) }
-                DiagnosticLogger.info(LogCategory.PACKET, "0x23 packet from $address: [$hex] -> activeMask=0x${"%05X".format(mask)}")
-            }
-            gestureEngine.processButtonStates(ZwiftPacketParser.parse(value))
+        if (charUuid != MEASUREMENT_CHAR_UUID || value.isEmpty()) return
+        val msgId = value[0]
+        // Ignore periodic idle keep-alive heartbeats (0x15, 0x19)
+        if (msgId == 0x15.toByte() || msgId == 0x19.toByte()) return
+
+        val hex = value.joinToString(" ") { "%02X".format(it) }
+        val mask = ZwiftPacketParser.parseActiveButtonMask(value)
+
+        if (mask == null) {
+            DiagnosticLogger.info(LogCategory.PACKET, "Non-0x23 packet from $address (msgId=0x${"%02X".format(msgId)}): [$hex]")
+            return
         }
+
+        val prevMask = podActiveMasks.put(address, mask) ?: 0
+        if (mask != 0 || prevMask != 0 || lastLoggedPayloadHex.put(address, hex) != hex) {
+            if (mask != 0) {
+                val matchedNames = ClickButton.entries.filter { (mask and it.bitmask) != 0 }.joinToString(",") { it.name }
+                DiagnosticLogger.info(
+                    LogCategory.PACKET,
+                    "0x23 packet from $address: [$hex] -> activeMask=0x${"%05X".format(mask)} (${matchedNames.ifEmpty { "UNMAPPED_BIT" }})"
+                )
+            }
+        }
+
+        // Combine active button masks across connected pods so mirrored pods don't cancel or double-trigger
+        val combinedMask = podActiveMasks.values.fold(0) { acc, m -> acc or m }
+        val combinedMap = EnumMap<ClickButton, Boolean>(ClickButton::class.java)
+        ClickButton.entries.forEach { button ->
+            combinedMap[button] = (combinedMask and button.bitmask) != 0
+        }
+        gestureEngine.processButtonStates(combinedMap)
     }
 
     private fun writeRideOnHandshake(gatt: BluetoothGatt, service: BluetoothGattService) {
-        val controlChar = service.getCharacteristic(CONTROL_POINT_CHAR_UUID) ?: run {
-            DiagnosticLogger.error(LogCategory.BLE, "Control point char 0003 missing on ${gatt.device?.address}")
-            return
-        }
+        val controlChar = service.getCharacteristic(CONTROL_POINT_CHAR_UUID) ?: return
         val writeType = if ((controlChar.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0 &&
             (controlChar.properties and BluetoothGattCharacteristic.PROPERTY_WRITE) == 0
         ) {
@@ -317,9 +329,9 @@ class ZwiftBleController(
         leftPodWatchdogJob?.cancel()
         leftPodWatchdogJob = scope.launch {
             delay(currentConfig.leftPodAutoReconnectSec * 1000L)
-            DiagnosticLogger.info(LogCategory.BLE, "55s Left-Pod watchdog cycling connection for ${leftDevice.address}...")
             val existing = activeGatts.remove(leftDevice.address)
             connectedPods.remove(leftDevice.address)
+            podActiveMasks.remove(leftDevice.address)
             existing?.disconnect()
             existing?.close()
             delay(150L)
@@ -328,7 +340,6 @@ class ZwiftBleController(
     }
 
     override fun disconnect() {
-        DiagnosticLogger.info(LogCategory.BLE, "Disconnecting BLE controller and stopping scan")
         leftPodWatchdogJob?.cancel()
         if (isScanning && bluetoothAdapter?.isEnabled == true) {
             bluetoothAdapter.bluetoothLeScanner?.stopScan(scanCallback)
@@ -340,6 +351,7 @@ class ZwiftBleController(
         }
         activeGatts.clear()
         connectedPods.clear()
+        podActiveMasks.clear()
         _connectionState.value = BleConnectionState.DISCONNECTED
     }
 }

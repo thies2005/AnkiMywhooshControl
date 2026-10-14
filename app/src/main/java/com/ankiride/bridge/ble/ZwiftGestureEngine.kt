@@ -10,12 +10,14 @@ class ZwiftGestureEngine(
 ) {
     companion object {
         const val LONG_PRESS_THRESHOLD_MS = 450L
+        const val DEBOUNCE_WINDOW_MS = 120L
     }
 
     private class ButtonStateTracker {
         var isPressed: Boolean = false
         var pressStartTime: Long = 0L
         var longPressTriggered: Boolean = false
+        var lastEmittedTime: Long = -1000L
     }
 
     private val trackers = EnumMap<ClickButton, ButtonStateTracker>(ClickButton::class.java).apply {
@@ -33,13 +35,19 @@ class ZwiftGestureEngine(
             } else if (isPressed && tracker.isPressed) {
                 if (!tracker.longPressTriggered && (nowMs - tracker.pressStartTime) >= LONG_PRESS_THRESHOLD_MS) {
                     tracker.longPressTriggered = true
-                    onGestureDetected(ButtonGestureEvent(button, PressType.LONG_PRESS, nowMs))
+                    if ((nowMs - tracker.lastEmittedTime) >= DEBOUNCE_WINDOW_MS) {
+                        tracker.lastEmittedTime = nowMs
+                        onGestureDetected(ButtonGestureEvent(button, PressType.LONG_PRESS, nowMs))
+                    }
                 }
             } else if (!isPressed && tracker.isPressed) {
                 tracker.isPressed = false
                 val holdDuration = nowMs - tracker.pressStartTime
                 if (!tracker.longPressTriggered && holdDuration < LONG_PRESS_THRESHOLD_MS) {
-                    onGestureDetected(ButtonGestureEvent(button, PressType.SINGLE_CLICK, nowMs))
+                    if ((nowMs - tracker.lastEmittedTime) >= DEBOUNCE_WINDOW_MS) {
+                        tracker.lastEmittedTime = nowMs
+                        onGestureDetected(ButtonGestureEvent(button, PressType.SINGLE_CLICK, nowMs))
+                    }
                 }
             }
         }
