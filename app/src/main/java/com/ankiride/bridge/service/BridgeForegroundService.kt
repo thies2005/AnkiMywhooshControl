@@ -12,19 +12,14 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.ankiride.bridge.anki.AnkiActionDispatcherImpl
 import com.ankiride.bridge.ble.ZwiftBleController
-import com.ankiride.bridge.core.AppConfiguration
-import com.ankiride.bridge.core.BleConnectionState
+import com.ankiride.bridge.core.*
 import com.ankiride.bridge.mywhoosh.MyWhooshNetworkDispatcherImpl
 import com.ankiride.bridge.mywhoosh.OpenBikeControlClient
 import com.ankiride.bridge.ui.MainActivity
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 
 class BridgeForegroundService : Service() {
 
@@ -82,6 +77,7 @@ class BridgeForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         if (action == ACTION_STOP) {
+            DiagnosticLogger.info(LogCategory.SYSTEM, "BridgeForegroundService received STOP action")
             stopBridge()
             stopSelf()
             return START_NOT_STICKY
@@ -121,7 +117,22 @@ class BridgeForegroundService : Service() {
     }
 
     private fun startBridge() {
+        if (_isRunningFlow.value) {
+            DiagnosticLogger.info(
+                LogCategory.SYSTEM,
+                "Bridge is already running. Updated configuration dynamically (mode=${currentConfig.mode})."
+            )
+            return
+        }
+
+        // Clean up any stale resources defensively
+        stopBridgeResources()
+
         _isRunningFlow.value = true
+        DiagnosticLogger.info(
+            LogCategory.SYSTEM,
+            "Starting AnkiRide Bridge service (mode=${currentConfig.mode}, port=${currentConfig.openBikeServerPort})"
+        )
 
         val server = OpenBikeControlClient(this, serviceScope)
         openBikeServer = server
@@ -161,6 +172,13 @@ class BridgeForegroundService : Service() {
     }
 
     private fun stopBridge() {
+        stopBridgeResources()
+        _isRunningFlow.value = false
+        _connectionStateFlow.value = BleConnectionState.DISCONNECTED
+        DiagnosticLogger.info(LogCategory.SYSTEM, "AnkiRide Bridge service stopped")
+    }
+
+    private fun stopBridgeResources() {
         bleController?.disconnect()
         openBikeServer?.stopServer()
 
@@ -169,9 +187,6 @@ class BridgeForegroundService : Service() {
         myWhooshDispatcher = null
         ankiDispatcher = null
         actionRouter = null
-
-        _isRunningFlow.value = false
-        _connectionStateFlow.value = BleConnectionState.DISCONNECTED
     }
 
     override fun onDestroy() {

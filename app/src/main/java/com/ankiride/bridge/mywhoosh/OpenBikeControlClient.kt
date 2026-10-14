@@ -3,6 +3,8 @@ package com.ankiride.bridge.mywhoosh
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import com.ankiride.bridge.core.DiagnosticLogger
+import com.ankiride.bridge.core.LogCategory
 import com.ankiride.bridge.core.MyWhooshAction
 import kotlinx.coroutines.*
 import java.io.OutputStream
@@ -35,19 +37,31 @@ class OpenBikeControlClient(
             try {
                 val srv = ServerSocket(port)
                 serverSocket = srv
+                DiagnosticLogger.info(
+                    LogCategory.MYWHOOSH,
+                    "OpenBikeControl TCP Server listening on port ${srv.localPort}"
+                )
                 registerMdnsService(srv.localPort)
                 while (isActive && !srv.isClosed) {
                     val client = srv.accept()
-                    val remoteHost = client.inetAddress?.hostAddress ?: ""
-                    if (LanAddressValidator.isLocalOrLanAddress(remoteHost)) {
+                    val rawHost = client.inetAddress?.hostAddress ?: ""
+                    if (LanAddressValidator.isLocalOrLanAddress(rawHost)) {
                         connectedClients.add(client)
+                        DiagnosticLogger.info(
+                            LogCategory.MYWHOOSH,
+                            "MyWhoosh client connected from $rawHost (total clients=${connectedClients.size})"
+                        )
                         // Send initial OpenBikeControl 0x02 Device Status (100% battery, connected flag = 1)
                         sendRawBytes(client, byteArrayOf(MSG_DEVICE_STATUS, 0x64, 0x01))
                     } else {
+                        DiagnosticLogger.warn(LogCategory.MYWHOOSH, "Rejected non-LAN socket connection from $rawHost")
                         client.close()
                     }
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (isActive) {
+                    DiagnosticLogger.error(LogCategory.MYWHOOSH, "OpenBikeControl server error: ${e.message}")
+                }
             }
         }
     }
@@ -73,6 +87,10 @@ class OpenBikeControlClient(
             }
         }
         if (delivered) {
+            DiagnosticLogger.info(
+                LogCategory.MYWHOOSH,
+                "Sent OpenBikeControl binary opcode 0x${"%02X".format(action.openBikeOpcode)} (${action.name}) to ${connectedClients.size} client(s)"
+            )
             delay(35L)
             for (client in connectedClients) {
                 sendRawBytes(client, releasePacket)
@@ -111,15 +129,22 @@ class OpenBikeControlClient(
         }
 
         val listener = object : NsdManager.RegistrationListener {
-            override fun onServiceRegistered(info: NsdServiceInfo?) {}
-            override fun onRegistrationFailed(info: NsdServiceInfo?, errorCode: Int) {}
-            override fun onServiceUnregistered(info: NsdServiceInfo?) {}
+            override fun onServiceRegistered(info: NsdServiceInfo?) {
+                DiagnosticLogger.info(LogCategory.MYWHOOSH, "mDNS registered: ${info?.serviceName} ($SERVICE_TYPE) on port $port")
+            }
+            override fun onRegistrationFailed(info: NsdServiceInfo?, errorCode: Int) {
+                DiagnosticLogger.error(LogCategory.MYWHOOSH, "mDNS registration failed (errorCode=$errorCode)")
+            }
+            override fun onServiceUnregistered(info: NsdServiceInfo?) {
+                DiagnosticLogger.info(LogCategory.MYWHOOSH, "mDNS service unregistered")
+            }
             override fun onUnregistrationFailed(info: NsdServiceInfo?, errorCode: Int) {}
         }
         registrationListener = listener
         try {
             manager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            DiagnosticLogger.error(LogCategory.MYWHOOSH, "Failed to register mDNS: ${e.message}")
         }
     }
 
@@ -144,6 +169,7 @@ class OpenBikeControlClient(
         } catch (_: Exception) {
         }
         serverSocket = null
+        DiagnosticLogger.info(LogCategory.MYWHOOSH, "OpenBikeControl TCP server stopped")
     }
 
     fun close() {

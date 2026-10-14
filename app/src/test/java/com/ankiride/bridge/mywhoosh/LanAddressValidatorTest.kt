@@ -1,10 +1,40 @@
 package com.ankiride.bridge.mywhoosh
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LanAddressValidatorTest {
+
+    @Test
+    fun testNormalizeIpv4MappedHost() {
+        assertEquals("127.0.0.1", LanAddressValidator.normalizeIpv4MappedHost("::ffff:127.0.0.1"))
+        assertEquals("192.168.1.1", LanAddressValidator.normalizeIpv4MappedHost("::FFFF:192.168.1.1"))
+        assertEquals("10.0.0.1", LanAddressValidator.normalizeIpv4MappedHost("0:0:0:0:0:ffff:10.0.0.1"))
+        assertEquals("172.16.0.1", LanAddressValidator.normalizeIpv4MappedHost("0:0:0:0:0:FFFF:172.16.0.1"))
+        assertEquals("192.168.1.50", LanAddressValidator.normalizeIpv4MappedHost("192.168.1.50"))
+        assertEquals("127.0.0.1", LanAddressValidator.normalizeIpv4MappedHost("  ::ffff:127.0.0.1  "))
+    }
+
+    @Test
+    fun testDualStackAddressesAllowed() {
+        assertTrue(LanAddressValidator.isLocalOrLanAddress("::ffff:127.0.0.1"))
+        assertTrue(LanAddressValidator.isLocalOrLanAddress("::ffff:192.168.1.1"))
+        assertTrue(LanAddressValidator.isLocalOrLanAddress("::ffff:10.0.0.5"))
+        assertTrue(LanAddressValidator.isLocalOrLanAddress("::ffff:172.16.1.1"))
+        assertTrue(LanAddressValidator.isLocalOrLanAddress("0:0:0:0:0:ffff:127.0.0.1"))
+        assertTrue(LanAddressValidator.isLocalOrLanAddress("0:0:0:0:0:ffff:192.168.0.100"))
+        assertTrue(LanAddressValidator.isAllowedTargetHost("::ffff:127.0.0.1"))
+        assertTrue(LanAddressValidator.isAllowedTargetHost("::ffff:192.168.1.1"))
+    }
+
+    @Test
+    fun testDualStackPublicAddressesBlocked() {
+        assertFalse(LanAddressValidator.isLocalOrLanAddress("::ffff:8.8.8.8"))
+        assertFalse(LanAddressValidator.isLocalOrLanAddress("0:0:0:0:0:ffff:1.1.1.1"))
+        assertFalse(LanAddressValidator.isAllowedTargetHost("::ffff:8.8.8.8"))
+    }
 
     @Test
     fun testLoopbackAddressesAllowed() {

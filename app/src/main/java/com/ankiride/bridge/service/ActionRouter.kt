@@ -14,13 +14,30 @@ class ActionRouter(
     fun routeGesture(event: ButtonGestureEvent) {
         val config = configSupplier()
 
+        // 1. Check user custom button overrides first
+        val customTarget = config.customBindings[ButtonBindingKey(event.button, event.type)]
+        if (customTarget != null) {
+            DiagnosticLogger.info(
+                LogCategory.ROUTER,
+                "Custom binding: ${event.button.name} (${event.type.name}) -> ${customTarget.label}"
+            )
+            customTarget.ankiAction?.let { ankiDispatcher.dispatch(it) }
+            customTarget.myWhooshAction?.let { mw ->
+                scope.launch { myWhooshDispatcher.dispatch(mw, config) }
+            }
+            return
+        }
+
+        // 2. Otherwise use deterministic mode defaults
         when (config.mode) {
             OperatingMode.MODE_3_ANKI_ONLY -> {
                 val ankiAction = mapAnkiOnlyMode(event) ?: return
+                DiagnosticLogger.info(LogCategory.ROUTER, "Mode 3 (Anki-Only): ${event.button.name} -> $ankiAction")
                 ankiDispatcher.dispatch(ankiAction)
             }
             OperatingMode.MODE_4_MYWHOOSH_ONLY -> {
                 val mwAction = mapMyWhooshOnlyMode(event, config) ?: return
+                DiagnosticLogger.info(LogCategory.ROUTER, "Mode 4 (MyWhoosh-Only): ${event.button.name} -> $mwAction")
                 scope.launch { myWhooshDispatcher.dispatch(mwAction, config) }
             }
             OperatingMode.MODE_1_TABLET_SPLIT_SCREEN, OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH -> {
@@ -41,24 +58,33 @@ class ActionRouter(
                 } else {
                     MyWhooshAction.SHIFT_UP
                 }
+                DiagnosticLogger.info(LogCategory.ROUTER, "1-Pod Combined: ${event.button.name} (${event.type.name}) -> $mwAction")
                 scope.launch { myWhooshDispatcher.dispatch(mwAction, config) }
             }
             ClickButton.Z -> {
                 if (event.type == PressType.LONG_PRESS) {
+                    DiagnosticLogger.info(LogCategory.ROUTER, "1-Pod Combined: Z (LONG_PRESS) -> UNDO")
                     ankiDispatcher.dispatch(AnkiAction.UNDO)
                 } else if (config.useZForShiftDownInSinglePodMode) {
+                    DiagnosticLogger.info(LogCategory.ROUTER, "1-Pod Combined: Z (SINGLE_CLICK) -> SHIFT_DOWN")
                     scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.SHIFT_DOWN, config) }
                 } else {
+                    DiagnosticLogger.info(LogCategory.ROUTER, "1-Pod Combined: Z (SINGLE_CLICK) -> FLIP_OR_EASY")
                     ankiDispatcher.dispatch(AnkiAction.FLIP_OR_EASY)
                 }
             }
             ClickButton.A -> {
                 val action = if (event.type == PressType.LONG_PRESS) AnkiAction.FLIP_OR_EASY else AnkiAction.FLIP_OR_GOOD
+                DiagnosticLogger.info(LogCategory.ROUTER, "1-Pod Combined: A (${event.type.name}) -> $action")
                 ankiDispatcher.dispatch(action)
             }
-            ClickButton.B -> ankiDispatcher.dispatch(AnkiAction.FLIP_OR_HARD)
+            ClickButton.B -> {
+                DiagnosticLogger.info(LogCategory.ROUTER, "1-Pod Combined: B -> FLIP_OR_HARD")
+                ankiDispatcher.dispatch(AnkiAction.FLIP_OR_HARD)
+            }
             ClickButton.Y -> {
                 val action = if (event.type == PressType.LONG_PRESS) AnkiAction.UNDO else AnkiAction.FLIP_OR_AGAIN
+                DiagnosticLogger.info(LogCategory.ROUTER, "1-Pod Combined: Y (${event.type.name}) -> $action")
                 ankiDispatcher.dispatch(action)
             }
             else -> {}
@@ -67,25 +93,47 @@ class ActionRouter(
 
     private fun routeDualPodCombinedMode(event: ButtonGestureEvent, config: AppConfiguration) {
         when (event.button) {
-            // Right Pod A/B/Y/Z -> AnkiDroid
-            ClickButton.A -> ankiDispatcher.dispatch(AnkiAction.FLIP_OR_GOOD)
-            ClickButton.B -> ankiDispatcher.dispatch(AnkiAction.FLIP_OR_HARD)
-            ClickButton.Y -> ankiDispatcher.dispatch(AnkiAction.FLIP_OR_AGAIN)
+            ClickButton.A -> {
+                DiagnosticLogger.info(LogCategory.ROUTER, "Dual-Pod Combined: A -> FLIP_OR_GOOD")
+                ankiDispatcher.dispatch(AnkiAction.FLIP_OR_GOOD)
+            }
+            ClickButton.B -> {
+                DiagnosticLogger.info(LogCategory.ROUTER, "Dual-Pod Combined: B -> FLIP_OR_HARD")
+                ankiDispatcher.dispatch(AnkiAction.FLIP_OR_HARD)
+            }
+            ClickButton.Y -> {
+                DiagnosticLogger.info(LogCategory.ROUTER, "Dual-Pod Combined: Y -> FLIP_OR_AGAIN")
+                ankiDispatcher.dispatch(AnkiAction.FLIP_OR_AGAIN)
+            }
             ClickButton.Z -> {
                 val action = if (event.type == PressType.LONG_PRESS) AnkiAction.UNDO else AnkiAction.FLIP_OR_EASY
+                DiagnosticLogger.info(LogCategory.ROUTER, "Dual-Pod Combined: Z (${event.type.name}) -> $action")
                 ankiDispatcher.dispatch(action)
             }
-            // Shift Rockers & Left Pod D-Pad -> MyWhoosh
             ClickButton.SHIFT_UP_RIGHT, ClickButton.SHIFT_UP_LEFT -> {
+                DiagnosticLogger.info(LogCategory.ROUTER, "Dual-Pod Combined: ${event.button.name} -> SHIFT_UP")
                 scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.SHIFT_UP, config) }
             }
             ClickButton.SHIFT_DOWN_LEFT, ClickButton.SHIFT_DOWN_RIGHT -> {
+                DiagnosticLogger.info(LogCategory.ROUTER, "Dual-Pod Combined: ${event.button.name} -> SHIFT_DOWN")
                 scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.SHIFT_DOWN, config) }
             }
-            ClickButton.LEFT -> scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.STEER_LEFT, config) }
-            ClickButton.RIGHT -> scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.STEER_RIGHT, config) }
-            ClickButton.UP -> scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.TOGGLE_CAMERA, config) }
-            ClickButton.DOWN -> scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.EMOTE, config) }
+            ClickButton.LEFT -> {
+                DiagnosticLogger.info(LogCategory.ROUTER, "Dual-Pod Combined: LEFT -> STEER_LEFT")
+                scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.STEER_LEFT, config) }
+            }
+            ClickButton.RIGHT -> {
+                DiagnosticLogger.info(LogCategory.ROUTER, "Dual-Pod Combined: RIGHT -> STEER_RIGHT")
+                scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.STEER_RIGHT, config) }
+            }
+            ClickButton.UP -> {
+                DiagnosticLogger.info(LogCategory.ROUTER, "Dual-Pod Combined: UP -> TOGGLE_CAMERA")
+                scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.TOGGLE_CAMERA, config) }
+            }
+            ClickButton.DOWN -> {
+                DiagnosticLogger.info(LogCategory.ROUTER, "Dual-Pod Combined: DOWN -> EMOTE")
+                scope.launch { myWhooshDispatcher.dispatch(MyWhooshAction.EMOTE, config) }
+            }
             else -> {}
         }
     }
