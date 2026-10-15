@@ -392,4 +392,37 @@ class ActionRouterTest {
         testScheduler.advanceUntilIdle()
         assertEquals(listOf(MyWhooshAction.STEER_LEFT), myWhooshDispatcher.dispatchedActions)
     }
+
+    @Test
+    fun testMode5UbuntuAnkiConnectRouting() = runTest {
+        val config = AppConfiguration(
+            mode = OperatingMode.MODE_5_UBUNTU_ANKICONNECT,
+            rightPodOnlyNoZwift = true
+        )
+        val router = ActionRouter(
+            scope = this,
+            configSupplier = { config },
+            ankiDispatcher = ankiDispatcher,
+            myWhooshDispatcher = myWhooshDispatcher
+        )
+
+        // Z -> Shift Up, A -> Shift Down
+        router.routeGesture(ButtonGestureEvent(ClickButton.Z, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.A, PressType.SINGLE_CLICK))
+
+        // Y -> FLIP_OR_AGAIN, B -> FLIP_OR_GOOD
+        router.routeGesture(ButtonGestureEvent(ClickButton.Y, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.B, PressType.SINGLE_CLICK))
+
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(
+            listOf(MyWhooshAction.SHIFT_UP, MyWhooshAction.SHIFT_DOWN),
+            myWhooshDispatcher.dispatchedActions
+        )
+        assertEquals(
+            listOf(AnkiAction.FLIP_OR_AGAIN, AnkiAction.FLIP_OR_GOOD),
+            ankiDispatcher.dispatchedActions
+        )
+    }
 }

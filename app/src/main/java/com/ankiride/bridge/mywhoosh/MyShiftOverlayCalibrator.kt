@@ -12,10 +12,60 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import com.ankiride.bridge.core.DiagnosticLogger
 import com.ankiride.bridge.core.LogCategory
+import com.ankiride.bridge.core.OperatingMode
 
 object MyShiftOverlayCalibrator {
+    private const val PREFS_CALIBRATION = "myshift_calibration_profiles"
     private var overlayView: View? = null
     private var windowManager: WindowManager? = null
+
+    fun profilePrefix(context: Context, mode: OperatingMode): String {
+        val dm = context.resources.displayMetrics
+        val orientation = if (dm.widthPixels >= dm.heightPixels) "land" else "port"
+        return "calib_${mode.name}_${orientation}_${dm.widthPixels}x${dm.heightPixels}"
+    }
+
+    fun loadCalibratedCoordinates(context: Context, mode: OperatingMode): FloatArray {
+        val prefs = context.getSharedPreferences(PREFS_CALIBRATION, Context.MODE_PRIVATE)
+        val prefix = profilePrefix(context, mode)
+        val upX = prefs.getFloat("${prefix}_up_x", 0.92f)
+        val upY = prefs.getFloat("${prefix}_up_y", 0.85f)
+        val downX = prefs.getFloat("${prefix}_down_x", 0.84f)
+        val downY = prefs.getFloat("${prefix}_down_y", 0.85f)
+        return floatArrayOf(upX, upY, downX, downY)
+    }
+
+    fun saveCalibratedCoordinates(
+        context: Context,
+        mode: OperatingMode,
+        upX: Float,
+        upY: Float,
+        downX: Float,
+        downY: Float
+    ) {
+        val prefs = context.getSharedPreferences(PREFS_CALIBRATION, Context.MODE_PRIVATE)
+        val prefix = profilePrefix(context, mode)
+        prefs.edit()
+            .putFloat("${prefix}_up_x", upX)
+            .putFloat("${prefix}_up_y", upY)
+            .putFloat("${prefix}_down_x", downX)
+            .putFloat("${prefix}_down_y", downY)
+            .apply()
+    }
+
+    fun showCalibrationOverlay(service: AccessibilityService, mode: OperatingMode) {
+        val coords = loadCalibratedCoordinates(service, mode)
+        showOverlay(
+            service = service,
+            initialUpX = coords[0],
+            initialUpY = coords[1],
+            initialDownX = coords[2],
+            initialDownY = coords[3],
+            onCoordinatesChanged = { upX, upY, downX, downY ->
+                saveCalibratedCoordinates(service, mode, upX, upY, downX, downY)
+            }
+        )
+    }
 
     @SuppressLint("ClickableViewAccessibility")
     fun showOverlay(
@@ -41,6 +91,20 @@ object MyShiftOverlayCalibrator {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
         }
+
+        val closeBtn = TextView(service).apply {
+            text = "✕ Close Calibrator"
+            setBackgroundColor(0xDD000000.toInt())
+            setTextColor(0xFFFF7B72.toInt())
+            setPadding(24, 16, 24, 16)
+            textSize = 13f
+            setOnClickListener { hideOverlay() }
+        }
+        val closeParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            topMargin = 40
+        }
+        root.addView(closeBtn, closeParams)
 
         // Shift Up Target
         val upTarget = TextView(service).apply {
@@ -156,6 +220,10 @@ object MyShiftOverlayCalibrator {
         }
         overlayView = null
         windowManager = null
+    }
+
+    fun hide(service: AccessibilityService? = null) {
+        hideOverlay()
     }
 
     fun isOverlayShowing(): Boolean = overlayView != null

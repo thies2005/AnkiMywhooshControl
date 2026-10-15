@@ -46,6 +46,8 @@ class BridgeAccessibilityService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        com.ankiride.bridge.ui.FloatingHudPill.hide(this)
+        com.ankiride.bridge.mywhoosh.MyShiftOverlayCalibrator.hide(this)
         if (activeInstance == this) {
             activeInstance = null
             _isConnectedFlow.value = false
@@ -55,6 +57,8 @@ class BridgeAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        com.ankiride.bridge.ui.FloatingHudPill.hide(this)
+        com.ankiride.bridge.mywhoosh.MyShiftOverlayCalibrator.hide(this)
         if (activeInstance == this) {
             activeInstance = null
             _isConnectedFlow.value = false

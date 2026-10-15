@@ -158,12 +158,18 @@ fun AnkiRideDashboard(
     val lastRightMac by ZwiftBleController.lastRightMac.collectAsState()
     val lastLeftMac by ZwiftBleController.lastLeftMac.collectAsState()
 
-    var selectedMode by remember { mutableStateOf(OperatingMode.MODE_1_TABLET_SPLIT_SCREEN) }
-    var rightPodOnly by remember { mutableStateOf(true) }
-    var useZForShiftDown by remember { mutableStateOf(true) }
-    var useTouchFallback by remember { mutableStateOf(true) }
+    val initialConfig = remember { ButtonMappingStore.loadFullConfiguration(context) }
+    var selectedMode by remember { mutableStateOf(initialConfig.mode) }
+    var rightPodOnly by remember { mutableStateOf(initialConfig.rightPodOnlyNoZwift) }
+    var useZForShiftDown by remember { mutableStateOf(initialConfig.useZForShiftDownInSinglePodMode) }
+    var useTouchFallback by remember { mutableStateOf(initialConfig.useMyShiftTouchFallbackWhenNoClient) }
+    var floatingHudEnabled by remember { mutableStateOf(initialConfig.floatingHudPillEnabled) }
+    var hapticEnabled by remember { mutableStateOf(initialConfig.hapticFeedbackEnabled) }
+    var audioEnabled by remember { mutableStateOf(initialConfig.audioFeedbackEnabled) }
+    var ubuntuHost by remember { mutableStateOf(initialConfig.ubuntuAnkiConnectHost) }
+    var ubuntuPortText by remember { mutableStateOf(initialConfig.ubuntuAnkiConnectPort.toString()) }
     var lockToConnectedPods by remember { mutableStateOf(false) }
-    var customBindings by remember { mutableStateOf(ButtonMappingStore.loadBindings(context)) }
+    var customBindings by remember { mutableStateOf(initialConfig.customBindings) }
 
     // Reactive permission states updated on ON_RESUME and when service state changes
     var a11yEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled(context)) }
@@ -193,22 +199,51 @@ fun AnkiRideDashboard(
     }
 
     fun buildCurrentConfig(): AppConfiguration {
+        val port = ubuntuPortText.toIntOrNull() ?: 8765
         return AppConfiguration(
             mode = selectedMode,
             rightPodOnlyNoZwift = rightPodOnly,
             useZForShiftDownInSinglePodMode = useZForShiftDown,
             useMyShiftTouchFallbackWhenNoClient = useTouchFallback,
+            floatingHudPillEnabled = floatingHudEnabled,
+            hapticFeedbackEnabled = hapticEnabled,
+            audioFeedbackEnabled = audioEnabled,
+            ubuntuAnkiConnectHost = ubuntuHost.trim(),
+            ubuntuAnkiConnectPort = port,
             pinnedRightPodMac = if (lockToConnectedPods) lastRightMac else null,
             pinnedLeftPodMac = if (lockToConnectedPods) lastLeftMac else null,
             customBindings = customBindings
         )
     }
 
-    // Keep live service config synced when toggles or custom bindings change
-    LaunchedEffect(selectedMode, rightPodOnly, useZForShiftDown, useTouchFallback, lockToConnectedPods, customBindings) {
+    // Keep live service config synced and persisted when toggles or custom bindings change
+    LaunchedEffect(
+        selectedMode,
+        rightPodOnly,
+        useZForShiftDown,
+        useTouchFallback,
+        floatingHudEnabled,
+        hapticEnabled,
+        audioEnabled,
+        ubuntuHost,
+        ubuntuPortText,
+        lockToConnectedPods,
+        customBindings
+    ) {
+        val cfg = buildCurrentConfig()
+        ButtonMappingStore.saveFullConfiguration(context, cfg)
         if (isRunning) {
-            BridgeForegroundService.startService(context, buildCurrentConfig())
+            BridgeForegroundService.startService(context, cfg)
         }
+    }
+
+    LaunchedEffect(bleState, selectedMode, floatingHudEnabled) {
+        com.ankiride.bridge.ui.FloatingHudPill.syncVisibility(
+            service = BridgeAccessibilityService.activeInstance,
+            enabled = floatingHudEnabled,
+            bleState = bleState,
+            mode = selectedMode
+        )
     }
 
     val scrollState = rememberScrollState()
@@ -269,6 +304,63 @@ fun AnkiRideDashboard(
                 selectedMode = selectedMode,
                 onModeSelected = { selectedMode = it }
             )
+
+            if (selectedMode == OperatingMode.MODE_5_UBUNTU_ANKICONNECT) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = "Ubuntu Desktop Anki (AnkiConnect Port 8765)",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        Text(
+                            text = "In Desktop Anki -> Tools -> Add-ons -> AnkiConnect -> Config, set webBindAddress to 0.0.0.0 and restart Anki.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = ubuntuHost,
+                                onValueChange = { ubuntuHost = it },
+                                label = { Text("Ubuntu LAN IPv4 (e.g. 192.168.1.50)") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedTextField(
+                                value = ubuntuPortText,
+                                onValueChange = { ubuntuPortText = it.filter { ch -> ch.isDigit() } },
+                                label = { Text("Port") },
+                                modifier = Modifier.width(96.dp)
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                val port = ubuntuPortText.toIntOrNull() ?: 8765
+                                val client = com.ankiride.bridge.anki.AnkiConnectClient()
+                                Thread {
+                                    val ok = client.dispatchAnkiConnectAction(
+                                        host = ubuntuHost.trim(),
+                                        port = port,
+                                        action = AnkiAction.FLIP_CARD
+                                    )
+                                    DiagnosticLogger.info(
+                                        LogCategory.ANKI,
+                                        "Test Ubuntu Anki Flip -> ${if (ok) "Success (guiShowAnswer)" else "Failed (check LAN IP/port)"}"
+                                    )
+                                }.start()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Test Ubuntu Anki Flip (guiShowAnswer)")
+                        }
+                    }
+                }
+            }
 
             // 4. Hardware & Shifting Behavior (No manual MAC typing needed)
             Card(
@@ -338,6 +430,74 @@ fun AnkiRideDashboard(
                         Switch(
                             checked = useTouchFallback,
                             onCheckedChange = { useTouchFallback = it }
+                        )
+                    }
+
+                    // Feature 1: Optional Floating Mini HUD Pill (Off by Default)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Floating Mini HUD Pill (Optional)", fontWeight = FontWeight.Medium)
+                            Text(
+                                text = "Off by default. Shows draggable mini status, due cards & last action over Split-Screen",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = floatingHudEnabled,
+                            onCheckedChange = {
+                                floatingHudEnabled = it
+                                com.ankiride.bridge.ui.FloatingHudPill.syncVisibility(
+                                    service = BridgeAccessibilityService.activeInstance,
+                                    enabled = it,
+                                    bleState = bleState,
+                                    mode = selectedMode
+                                )
+                            }
+                        )
+                    }
+
+                    // Feature 2A: Optional Haptic Vibration Cues (Off by Default)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Haptic Vibration Cues (Optional)", fontWeight = FontWeight.Medium)
+                            Text(
+                                text = "Off by default. Distinct vibration ticks for Shift Up, Shift Down, Anki Good & Again",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = hapticEnabled,
+                            onCheckedChange = { hapticEnabled = it }
+                        )
+                    }
+
+                    // Feature 2B: Optional Audio Beep/Tick Cues (Off by Default)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Audio Beep/Tick Cues (Optional)", fontWeight = FontWeight.Medium)
+                            Text(
+                                text = "Off by default. Subtle audio confirmation tones when shifting or grading cards",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = audioEnabled,
+                            onCheckedChange = { audioEnabled = it }
                         )
                     }
 
@@ -706,7 +866,8 @@ fun CustomButtonMappingCard(
 
             // 2. Quick 1-Tap Presets for Combined Modes (Right Pod 4 Colorful Buttons)
             if (editingMode == OperatingMode.MODE_1_TABLET_SPLIT_SCREEN ||
-                editingMode == OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH
+                editingMode == OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH ||
+                editingMode == OperatingMode.MODE_5_UBUNTU_ANKICONNECT
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1053,6 +1214,11 @@ fun ModeSelector(
             OperatingMode.MODE_4_MYWHOOSH_ONLY,
             "MyWhoosh-Only (Ride)",
             "Pure ride mode. All buttons mapped to MyWhoosh shifting, steering, UI toggle, and emotes."
+        ),
+        Triple(
+            OperatingMode.MODE_5_UBUNTU_ANKICONNECT,
+            "Ubuntu Anki + Ride",
+            "Desktop Anki on Ubuntu Laptop (AnkiConnect :8765) + MyWhoosh on Tablet/Phone."
         )
     )
 

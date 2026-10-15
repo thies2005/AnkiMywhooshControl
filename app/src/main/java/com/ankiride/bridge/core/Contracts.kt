@@ -19,6 +19,10 @@ enum class OperatingMode(val shortTitle: String, val subtitle: String) {
     MODE_4_MYWHOOSH_ONLY(
         "MyWhoosh-Only",
         "Full-screen MyWhoosh ride mode (all buttons mapped to MyWhoosh)"
+    ),
+    MODE_5_UBUNTU_ANKICONNECT(
+        "Ubuntu Anki + Ride",
+        "Desktop Anki on Ubuntu Laptop (AnkiConnect :8765) + MyWhoosh on Tablet/Phone"
     )
 }
 
@@ -150,6 +154,15 @@ data class AppConfiguration(
     val mode: OperatingMode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
     val rightPodOnlyNoZwift: Boolean = true,
     val useZForShiftDownInSinglePodMode: Boolean = true,
+    val autoStartOnControllerWake: Boolean = true,
+    // Feature 1: Optional Floating Mini HUD Pill ( strictly OFF by default )
+    val floatingHudPillEnabled: Boolean = false,
+    // Feature 2: Optional Haptic & Audio Cues ( strictly OFF by default )
+    val hapticFeedbackEnabled: Boolean = false,
+    val audioFeedbackEnabled: Boolean = false,
+    // Feature 4: Ubuntu Desktop AnkiConnect target (RFC1918 LAN IP & port 8765)
+    val ubuntuAnkiConnectHost: String = "192.168.1.100",
+    val ubuntuAnkiConnectPort: Int = 8765,
     val leftPodAutoReconnectSec: Int = 55,
     val openBikeServerPort: Int = 21587,
     val useMyShiftTouchFallbackWhenNoClient: Boolean = true,

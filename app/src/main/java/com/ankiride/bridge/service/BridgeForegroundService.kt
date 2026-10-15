@@ -155,8 +155,12 @@ class BridgeForegroundService : Service() {
             client = server,
             accessibilityServiceSupplier = { BridgeAccessibilityService.activeInstance }
         )
-        val anki = AnkiActionDispatcherImpl(serviceProvider = { BridgeAccessibilityService.activeInstance })
+        val anki = AnkiActionDispatcherImpl(
+            configSupplier = { currentConfig },
+            serviceProvider = { BridgeAccessibilityService.activeInstance }
+        )
         val router = ActionRouter(
+            context = this,
             scope = serviceScope,
             configSupplier = { currentConfig },
             ankiDispatcher = anki,

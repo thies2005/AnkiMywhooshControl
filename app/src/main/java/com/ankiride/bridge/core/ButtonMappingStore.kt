@@ -3,12 +3,19 @@ package com.ankiride.bridge.core
 import android.content.Context
 
 object ButtonMappingStore {
-    private const val PREFS_NAME = "ankiride_per_mode_bindings"
+    private const val PREFS_BINDINGS = "ankiride_per_mode_bindings_v4"
+    private const val PREFS_SETTINGS = "ankiride_app_settings_v4"
 
-    /**
-     * Resolves the active MappedTargetAction for a given (mode, button, pressType),
-     * checking per-mode user overrides first, then falling back to the mode's default preset.
-     */
+    private const val KEY_MODE = "operating_mode"
+    private const val KEY_RIGHT_POD_ONLY = "right_pod_only"
+    private const val KEY_AUTO_START = "auto_start_on_wake"
+    private const val KEY_FLOATING_HUD = "floating_hud_pill_enabled"
+    private const val KEY_HAPTIC = "haptic_feedback_enabled"
+    private const val KEY_AUDIO = "audio_feedback_enabled"
+    private const val KEY_UBUNTU_HOST = "ubuntu_ankiconnect_host"
+    private const val KEY_UBUNTU_PORT = "ubuntu_ankiconnect_port"
+    private const val KEY_TOUCH_FALLBACK = "touch_fallback"
+
     fun resolveAction(
         mode: OperatingMode,
         button: ClickButton,
@@ -29,8 +36,9 @@ object ButtonMappingStore {
         val canonical = button.canonicalButton
         return when (mode) {
             OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
-            OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH -> {
-                // Default 4-Colorful-Button Split:
+            OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH,
+            OperatingMode.MODE_5_UBUNTU_ANKICONNECT -> {
+                // Default 4-Colorful-Button Split for all Combined Ride + Anki Modes (Modes 1, 2, and 5):
                 // Z (Top Orange) = Shift Up (+), A (Bottom Blue) = Shift Down (–)
                 // Y (Left Yellow) = Anki Didn't Know (Again), B (Right Green) = Anki Good
                 when (canonical) {
@@ -88,7 +96,7 @@ object ButtonMappingStore {
     }
 
     fun loadBindings(context: Context): Map<ModeButtonBindingKey, MappedTargetAction> {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences(PREFS_BINDINGS, Context.MODE_PRIVATE)
         val result = mutableMapOf<ModeButtonBindingKey, MappedTargetAction>()
         for ((rawKey, rawVal) in prefs.all) {
             val parts = rawKey.split("|")
@@ -103,11 +111,45 @@ object ButtonMappingStore {
     }
 
     fun saveBindings(context: Context, bindings: Map<ModeButtonBindingKey, MappedTargetAction>) {
-        val editor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        val editor = context.getSharedPreferences(PREFS_BINDINGS, Context.MODE_PRIVATE).edit()
         editor.clear()
         for ((k, v) in bindings) {
             editor.putString("${k.mode.name}|${k.button.name}|${k.pressType.name}", v.name)
         }
         editor.apply()
+    }
+
+    fun loadFullConfiguration(context: Context): AppConfiguration {
+        val prefs = context.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE)
+        val modeName = prefs.getString(KEY_MODE, OperatingMode.MODE_1_TABLET_SPLIT_SCREEN.name)
+        val mode = OperatingMode.entries.firstOrNull { it.name == modeName }
+            ?: OperatingMode.MODE_1_TABLET_SPLIT_SCREEN
+        return AppConfiguration(
+            mode = mode,
+            rightPodOnlyNoZwift = prefs.getBoolean(KEY_RIGHT_POD_ONLY, true),
+            autoStartOnControllerWake = prefs.getBoolean(KEY_AUTO_START, true),
+            floatingHudPillEnabled = prefs.getBoolean(KEY_FLOATING_HUD, false), // Default OFF
+            hapticFeedbackEnabled = prefs.getBoolean(KEY_HAPTIC, false),        // Default OFF
+            audioFeedbackEnabled = prefs.getBoolean(KEY_AUDIO, false),          // Default OFF
+            ubuntuAnkiConnectHost = prefs.getString(KEY_UBUNTU_HOST, "192.168.1.100") ?: "192.168.1.100",
+            ubuntuAnkiConnectPort = prefs.getInt(KEY_UBUNTU_PORT, 8765),
+            useMyShiftTouchFallbackWhenNoClient = prefs.getBoolean(KEY_TOUCH_FALLBACK, true),
+            customBindings = loadBindings(context)
+        )
+    }
+
+    fun saveFullConfiguration(context: Context, config: AppConfiguration) {
+        context.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_MODE, config.mode.name)
+            .putBoolean(KEY_RIGHT_POD_ONLY, config.rightPodOnlyNoZwift)
+            .putBoolean(KEY_AUTO_START, config.autoStartOnControllerWake)
+            .putBoolean(KEY_FLOATING_HUD, config.floatingHudPillEnabled)
+            .putBoolean(KEY_HAPTIC, config.hapticFeedbackEnabled)
+            .putBoolean(KEY_AUDIO, config.audioFeedbackEnabled)
+            .putString(KEY_UBUNTU_HOST, config.ubuntuAnkiConnectHost.trim())
+            .putInt(KEY_UBUNTU_PORT, config.ubuntuAnkiConnectPort)
+            .putBoolean(KEY_TOUCH_FALLBACK, config.useMyShiftTouchFallbackWhenNoClient)
+            .apply()
+        saveBindings(context, config.customBindings)
     }
 }

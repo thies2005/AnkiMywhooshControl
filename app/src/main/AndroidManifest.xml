@@ -36,6 +36,9 @@
     <!-- Battery Optimization Exemption -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- Haptic Feedback Permission -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <!-- Feature flags -->
     <uses-feature
         android:name="android.hardware.bluetooth_le"

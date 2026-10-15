@@ -30,10 +30,11 @@ object MyShiftGestureFallback {
         myWhooshWindow.getBoundsInScreen(bounds)
         if (bounds.isEmpty) return false
 
+        val profileCoords = MyShiftOverlayCalibrator.loadCalibratedCoordinates(service, config.mode)
         val (normX, normY) = if (action == MyWhooshAction.SHIFT_UP) {
-            config.myShiftUpNormalizedX to config.myShiftUpNormalizedY
+            profileCoords[0] to profileCoords[1]
         } else {
-            config.myShiftDownNormalizedX to config.myShiftDownNormalizedY
+            profileCoords[2] to profileCoords[3]
         }
 
         val tapX = bounds.left + (bounds.width() * normX)
