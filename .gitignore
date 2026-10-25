@@ -9,4 +9,8 @@
 .cxx
 local.properties
 app/build/
+desktop/build/
 build/
+.ankiride/
+__pycache__/
+*.pyc
