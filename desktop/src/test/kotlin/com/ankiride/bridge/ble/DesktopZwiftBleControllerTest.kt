@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -268,5 +269,51 @@ class DesktopZwiftBleControllerTest {
         assertNull(controller.connectedRightMac.value)
         assertNull(controller.connectedLeftMac.value)
         assertEquals(BleConnectionState.DISCONNECTED, controller.connectionState.value)
+    }
+
+    @Test
+    fun testIsValidMacOrUuid() {
+        // Valid MAC addresses
+        assertTrue(DesktopZwiftBleController.isValidMacOrUuid("F4:C4:59:0C:6F:29"))
+        assertTrue(DesktopZwiftBleController.isValidMacOrUuid("AA-BB-CC-DD-EE-FF"))
+        assertTrue(DesktopZwiftBleController.isValidMacOrUuid("01:23:45:67:89:ab"))
+
+        // Valid CoreBluetooth UUID
+        assertTrue(DesktopZwiftBleController.isValidMacOrUuid("D273F680-D548-419D-B9D1-FA0472345229"))
+        assertTrue(DesktopZwiftBleController.isValidMacOrUuid("d273f680-d548-419d-b9d1-fa0472345229"))
+
+        // Invalid / shell injection / argument injection
+        assertFalse(DesktopZwiftBleController.isValidMacOrUuid("--help"))
+        assertFalse(DesktopZwiftBleController.isValidMacOrUuid("; rm -rf /"))
+        assertFalse(DesktopZwiftBleController.isValidMacOrUuid("F4:C4:59:0C:6F:29 --evil"))
+        assertFalse(DesktopZwiftBleController.isValidMacOrUuid("`reboot`"))
+        assertFalse(DesktopZwiftBleController.isValidMacOrUuid("$(whoami)"))
+        assertFalse(DesktopZwiftBleController.isValidMacOrUuid(""))
+        assertFalse(DesktopZwiftBleController.isValidMacOrUuid("   "))
+        assertFalse(DesktopZwiftBleController.isValidMacOrUuid(null))
+    }
+
+    @Test
+    fun testWorkerExtractionCreatesInHomeAnkiRideBinWithPosixPermissions() {
+        val extracted = controller.extractWorkerScript()
+        assertNotNull(extracted)
+        assertTrue(extracted!!.exists())
+
+        // Must be in ~/.ankiride/bin/zwift_ble_worker.py, never in /tmp
+        val expectedDir = File(System.getProperty("user.home"), ".ankiride/bin")
+        assertEquals(expectedDir.absolutePath, extracted.parentFile.absolutePath)
+        assertEquals("zwift_ble_worker.py", extracted.name)
+        assertFalse(extracted.absolutePath.startsWith("/tmp"))
+
+        // Check POSIX permissions if on a POSIX filesystem (Linux / macOS)
+        val isPosix = java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix")
+        if (isPosix) {
+            val perms = java.nio.file.Files.getPosixFilePermissions(extracted.toPath())
+            val expectedPerms = java.nio.file.attribute.PosixFilePermissions.fromString("rwx------")
+            assertEquals("File permissions must be 0700 (rwx------)", expectedPerms, perms)
+
+            val dirPerms = java.nio.file.Files.getPosixFilePermissions(expectedDir.toPath())
+            assertEquals("Directory permissions must be 0700 (rwx------)", expectedPerms, dirPerms)
+        }
     }
 }

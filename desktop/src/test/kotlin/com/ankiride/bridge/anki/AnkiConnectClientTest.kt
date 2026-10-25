@@ -3,6 +3,7 @@ package com.ankiride.bridge.anki
 import com.ankiride.bridge.core.AnkiAction
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.BufferedReader
@@ -304,6 +305,56 @@ class AnkiConnectClientTest {
             )
             assertTrue(ok)
             assertFalse(client.isAnswerVisible)
+        } finally {
+            server.close()
+            executor.shutdown()
+        }
+    }
+
+    @Test
+    fun testRogueServerStreamingExceedingLimitCappedAtMaxCharsWithoutOOM() {
+        val client = AnkiConnectClient()
+        val server = ServerSocket(0)
+        val port = server.localPort
+        val executor = Executors.newSingleThreadExecutor()
+
+        try {
+            executor.submit {
+                val socket = server.accept()
+                val out = socket.getOutputStream()
+                val header = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n"
+                out.write(header.toByteArray(Charsets.UTF_8))
+                out.flush()
+
+                // Stream 128 KB of data in chunks without closing socket (> 64 KB)
+                val chunk = "X".repeat(4096).toByteArray(Charsets.UTF_8)
+                for (i in 0 until 32) { // 32 * 4096 = 131,072 bytes
+                    try {
+                        out.write(chunk)
+                        out.flush()
+                    } catch (_: Exception) {
+                        break
+                    }
+                }
+                try {
+                    Thread.sleep(1000L)
+                } catch (_: InterruptedException) {
+                }
+                runCatching { socket.close() }
+            }
+
+            val response = client.sendJsonRpcRaw("127.0.0.1", port, "{\"action\":\"version\"}")
+            assertNotNull("Response should not be null", response)
+            assertEquals(
+                "Response length must be capped at MAX_RESPONSE_CHARS",
+                AnkiConnectClient.MAX_RESPONSE_CHARS,
+                response!!.length
+            )
+            assertEquals(8192, AnkiConnectClient.MAX_RESPONSE_CHARS)
+
+            // Verify dispatchAnkiConnectAction safely handles it without OutOfMemoryError
+            val ok = client.dispatchAnkiConnectAction("127.0.0.1", port, AnkiAction.FLIP_CARD)
+            assertFalse(ok)
         } finally {
             server.close()
             executor.shutdown()

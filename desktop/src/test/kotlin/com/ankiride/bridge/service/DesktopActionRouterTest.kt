@@ -1,5 +1,6 @@
 package com.ankiride.bridge.service
 
+import com.ankiride.bridge.ble.DesktopZwiftBleController
 import com.ankiride.bridge.core.AnkiAction
 import com.ankiride.bridge.core.AnkiActionDispatcher
 import com.ankiride.bridge.core.AppConfiguration
@@ -14,6 +15,7 @@ import com.ankiride.bridge.core.MyWhooshActionDispatcher
 import com.ankiride.bridge.core.OperatingMode
 import com.ankiride.bridge.core.PressType
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -306,5 +308,59 @@ class DesktopActionRouterTest {
         for (target in targetsToTest) {
             DesktopFeedbackCueManager.triggerCue(target, configAudioEnabled)
         }
+    }
+
+    @Test
+    fun testEndToEndControllerToRouterDiagnosticPipeline() = runTest {
+        val config = AppConfiguration(
+            mode = OperatingMode.MODE_5_UBUNTU_ANKICONNECT,
+            rightPodOnlyNoZwift = true
+        )
+        val controller = DesktopZwiftBleController(scope = this)
+        val router = DesktopActionRouter(
+            scope = this,
+            configSupplier = { config },
+            ankiDispatcher = ankiDispatcher,
+            myWhooshDispatcher = myWhooshDispatcher
+        )
+        val collectJob = launch {
+            controller.gestureEvents.collect { event ->
+                router.routeGesture(event)
+            }
+        }
+
+        val mac = "F4:C4:59:0C:6F:29"
+
+        // 1. Worker connects
+        val parseWorkerLineMethod = DesktopZwiftBleController::class.java.getDeclaredMethod("parseWorkerLine", String::class.java)
+        parseWorkerLineMethod.isAccessible = true
+        parseWorkerLineMethod.invoke(controller, "STATE CONNECTED_RIGHT_ONLY $mac")
+
+        // 2. Physical button press: Z pressed at t=1000ms
+        val packetZPress = byteArrayOf(
+            0x23, 0x08, 0xFF.toByte(), 0xFE.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0x0F
+        )
+        controller.handleRawNotification(mac, packetZPress, nowMs = 1000L)
+
+        // 3. Physical button release: Z released at t=1100ms (< 450ms -> SINGLE_CLICK)
+        val packetAllReleased = byteArrayOf(
+            0x23, 0x08, 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0x0F
+        )
+        controller.handleRawNotification(mac, packetAllReleased, nowMs = 1100L)
+
+        testScheduler.advanceUntilIdle()
+
+        // Check diagnostic logs
+        val logs = DiagnosticLogger.logs.value
+        val bleLogs = logs.filter { it.category == LogCategory.BLE }
+        val packetLogs = logs.filter { it.category == LogCategory.PACKET }
+        val routerLogs = logs.filter { it.category == LogCategory.ROUTER }
+
+        assertTrue("Must contain BLE connection log", bleLogs.any { it.message.contains("Connected to Right Pod") })
+        assertTrue("Must contain PACKET log", packetLogs.any { it.message.contains("0x23 packet from $mac") })
+        assertTrue("Must contain ROUTER action log", routerLogs.any { it.message.contains("->") })
+
+        collectJob.cancel()
+        controller.disconnect()
     }
 }

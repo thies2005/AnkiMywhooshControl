@@ -220,4 +220,76 @@ class DesktopButtonMappingStoreTest {
         assertFalse(config.hapticFeedbackEnabled)
         assertFalse(config.audioFeedbackEnabled)
     }
+
+    @Test
+    fun testResolveActionSinglePodShiftDownOverrideInRideModesVsMode3() {
+        val rideModes = listOf(
+            OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
+            OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH,
+            OperatingMode.MODE_4_MYWHOOSH_ONLY,
+            OperatingMode.MODE_5_UBUNTU_ANKICONNECT
+        )
+
+        for (mode in rideModes) {
+            val action = ButtonMappingStore.resolveAction(
+                mode = mode,
+                button = ClickButton.Z,
+                pressType = PressType.SINGLE_CLICK,
+                customBindings = emptyMap(),
+                rightPodOnlyNoZwift = true,
+                useZForShiftDownInSinglePodMode = true
+            )
+            assertEquals("Ride mode $mode must map Z to MW_SHIFT_DOWN when single-pod Z shift-down is active", MappedTargetAction.MW_SHIFT_DOWN, action)
+        }
+
+        // Mode 3 is Anki-only: Z must NOT become MW_SHIFT_DOWN (remains ANKI_FLIP_OR_HARD, while Y is ANKI_FLIP_OR_AGAIN)
+        val mode3ActionZ = ButtonMappingStore.resolveAction(
+            mode = OperatingMode.MODE_3_ANKI_ONLY,
+            button = ClickButton.Z,
+            pressType = PressType.SINGLE_CLICK,
+            customBindings = emptyMap(),
+            rightPodOnlyNoZwift = true,
+            useZForShiftDownInSinglePodMode = true
+        )
+        assertEquals(MappedTargetAction.ANKI_FLIP_OR_HARD, mode3ActionZ)
+
+        val mode3ActionY = ButtonMappingStore.resolveAction(
+            mode = OperatingMode.MODE_3_ANKI_ONLY,
+            button = ClickButton.Y,
+            pressType = PressType.SINGLE_CLICK,
+            customBindings = emptyMap(),
+            rightPodOnlyNoZwift = true,
+            useZForShiftDownInSinglePodMode = true
+        )
+        assertEquals(MappedTargetAction.ANKI_FLIP_OR_AGAIN, mode3ActionY)
+
+        // When useZForShiftDownInSinglePodMode is false, Z remains MW_SHIFT_UP in ride modes
+        val normalAction = ButtonMappingStore.resolveAction(
+            mode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
+            button = ClickButton.Z,
+            pressType = PressType.SINGLE_CLICK,
+            customBindings = emptyMap(),
+            rightPodOnlyNoZwift = true,
+            useZForShiftDownInSinglePodMode = false
+        )
+        assertEquals(MappedTargetAction.MW_SHIFT_UP, normalAction)
+    }
+
+    @Test
+    fun testPersistenceOfUseZForShiftDownInSinglePodMode() {
+        val tempFile = File.createTempFile("test_z_shiftdown", ".properties")
+        try {
+            val configTrue = AppConfiguration(useZForShiftDownInSinglePodMode = true)
+            ButtonMappingStore.saveConfiguration(configTrue, tempFile)
+            val loadedTrue = ButtonMappingStore.loadConfiguration(tempFile)
+            assertTrue(loadedTrue.useZForShiftDownInSinglePodMode)
+
+            val configFalse = AppConfiguration(useZForShiftDownInSinglePodMode = false)
+            ButtonMappingStore.saveConfiguration(configFalse, tempFile)
+            val loadedFalse = ButtonMappingStore.loadConfiguration(tempFile)
+            assertFalse(loadedFalse.useZForShiftDownInSinglePodMode)
+        } finally {
+            tempFile.delete()
+        }
+    }
 }

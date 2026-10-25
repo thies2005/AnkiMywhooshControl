@@ -166,4 +166,54 @@ class OpenBikeControlClientTest {
         val success = client.sendAction("8.8.8.8", 21587, MyWhooshAction.SHIFT_UP)
         assertFalse(success)
     }
+
+    @Test
+    fun testMaxConnectedClientsEnforcedAndOldestEvicted() = runBlocking(Dispatchers.IO) {
+        client.startServer(0, bindLocalhostOnly = true)
+        val port = awaitServerPort(client)
+        assertTrue(port > 0)
+
+        // Verify bindLocalhostOnly bound to 127.0.0.1
+        val srvField = OpenBikeControlClient::class.java.getDeclaredField("serverSocket")
+        srvField.isAccessible = true
+        val srvSocket = srvField.get(client) as ServerSocket
+        assertEquals("127.0.0.1", srvSocket.inetAddress.hostAddress)
+
+        val sockets = mutableListOf<Socket>()
+        try {
+            // Connect 6 clients sequentially
+            for (i in 1..6) {
+                val s = Socket("127.0.0.1", port)
+                sockets.add(s)
+                delay(40L)
+            }
+            delay(100L)
+
+            // MAX_CONNECTED_CLIENTS is 4
+            assertEquals(4, client.connectedClientCount())
+            assertEquals(OpenBikeControlClient.MAX_CONNECTED_CLIENTS, client.connectedClientCount())
+
+            // Server-side socket timeout must be CLIENT_SO_TIMEOUT_MS (60,000 ms)
+            val field = OpenBikeControlClient::class.java.getDeclaredField("connectedClients")
+            field.isAccessible = true
+            @Suppress("UNCHECKED_CAST")
+            val serverSockets = field.get(client) as List<Socket>
+            assertEquals(4, serverSockets.size)
+            for (ss in serverSockets) {
+                assertEquals(OpenBikeControlClient.CLIENT_SO_TIMEOUT_MS, ss.soTimeout)
+            }
+
+            // Oldest sockets (0 and 1) were evicted/closed by server
+            val in0 = sockets[0].getInputStream()
+            readExact(in0, 3) // initial handshake
+            val buf = ByteArray(10)
+            assertEquals(-1, in0.read(buf)) // server closed socket
+
+            val in1 = sockets[1].getInputStream()
+            readExact(in1, 3)
+            assertEquals(-1, in1.read(buf))
+        } finally {
+            sockets.forEach { runCatching { it.close() } }
+        }
+    }
 }

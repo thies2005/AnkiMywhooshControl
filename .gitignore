@@ -14,3 +14,6 @@ build/
 .ankiride/
 __pycache__/
 *.pyc
+dist/
+*.spec
+

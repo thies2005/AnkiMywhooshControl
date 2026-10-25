@@ -91,4 +91,53 @@ class OpenBikeControlClientTest {
         val success = server.sendAction("8.8.8.8", 21587, MyWhooshAction.SHIFT_UP)
         assertFalse(success)
     }
+
+    @Test
+    fun testMaxConnectedClientsEnforcedAndOldestEvicted() = runBlocking(Dispatchers.IO) {
+        val server = OpenBikeControlClient()
+        server.startServer(0, bindLocalhostOnly = true)
+        delay(100L)
+
+        val srvField = server.javaClass.getDeclaredField("serverSocket")
+        srvField.isAccessible = true
+        val srvSocket = srvField.get(server) as java.net.ServerSocket
+        val port = srvSocket.localPort
+        assertTrue(port > 0)
+        assertEquals("127.0.0.1", srvSocket.inetAddress.hostAddress)
+
+        val sockets = mutableListOf<Socket>()
+        try {
+            for (i in 1..6) {
+                val s = Socket("127.0.0.1", port)
+                sockets.add(s)
+                delay(40L)
+            }
+            delay(100L)
+
+            assertEquals(4, server.connectedClientCount())
+            assertEquals(OpenBikeControlClient.MAX_CONNECTED_CLIENTS, server.connectedClientCount())
+
+            val field = server.javaClass.getDeclaredField("connectedClients")
+            field.isAccessible = true
+            @Suppress("UNCHECKED_CAST")
+            val serverSockets = field.get(server) as List<Socket>
+            assertEquals(4, serverSockets.size)
+            for (ss in serverSockets) {
+                assertEquals(OpenBikeControlClient.CLIENT_SO_TIMEOUT_MS, ss.soTimeout)
+            }
+
+            val in0 = sockets[0].getInputStream()
+            val statusBuf = ByteArray(3)
+            var totalRead = 0
+            while (totalRead < 3) {
+                val r = in0.read(statusBuf, totalRead, 3 - totalRead)
+                if (r < 0) break
+                totalRead += r
+            }
+            assertEquals(-1, in0.read(ByteArray(10)))
+        } finally {
+            sockets.forEach { runCatching { it.close() } }
+            server.stopServer()
+        }
+    }
 }

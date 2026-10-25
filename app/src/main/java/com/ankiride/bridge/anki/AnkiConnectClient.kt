@@ -16,6 +16,7 @@ class AnkiConnectClient {
         const val DEFAULT_PORT = 8765
         const val SOCKET_TIMEOUT_MS = 1200
         const val FLIP_TO_GRADE_GUARD_MS = 350L
+        const val MAX_RESPONSE_CHARS = 8192
     }
 
     @Volatile
@@ -140,14 +141,17 @@ class AnkiConnectClient {
 
                 val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
                 val sb = StringBuilder()
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    sb.appendLine(line)
+                val buffer = CharArray(1024)
+                var charsRead = 0
+                while (sb.length < MAX_RESPONSE_CHARS &&
+                    reader.read(buffer, 0, minOf(buffer.size, MAX_RESPONSE_CHARS - sb.length)).also { charsRead = it } != -1
+                ) {
+                    sb.append(buffer, 0, charsRead)
                 }
                 sb.toString()
             }
-        } catch (e: Exception) {
-            DiagnosticLogger.error(LogCategory.ANKI, "Ubuntu AnkiConnect ($host:$port) connection failed: ${e.message}")
+        } catch (t: Throwable) {
+            DiagnosticLogger.error(LogCategory.ANKI, "Ubuntu AnkiConnect ($host:$port) connection failed: ${t.message}")
             null
         }
     }

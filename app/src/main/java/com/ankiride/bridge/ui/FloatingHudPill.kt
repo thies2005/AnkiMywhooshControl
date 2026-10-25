@@ -20,6 +20,7 @@ import com.ankiride.bridge.core.BleConnectionState
 import com.ankiride.bridge.core.ButtonMappingStore
 import com.ankiride.bridge.core.OperatingMode
 import com.ankiride.bridge.mywhoosh.MyShiftOverlayCalibrator
+import com.ankiride.bridge.service.BridgeForegroundService
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -166,6 +167,7 @@ object FloatingHudPill {
                         val nextMode = modes[(modes.indexOf(curCfg.mode) + 1) % modes.size]
                         val updated = curCfg.copy(mode = nextMode)
                         ButtonMappingStore.saveFullConfiguration(service, updated)
+                        BridgeForegroundService.startService(service, updated)
                         updateText(service, bleState, nextMode, "Mode -> ${nextMode.shortTitle}")
                     }
                     true

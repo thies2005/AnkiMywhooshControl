@@ -13,7 +13,8 @@ object ButtonMappingStore {
 
     private const val KEY_MODE = "operating_mode"
     private const val KEY_RIGHT_POD_ONLY = "right_pod_only"
-    private const val KEY_USE_Z_FOR_SHIFT_DOWN = "use_z_for_shift_down"
+    const val KEY_USE_Z_SHIFT_DOWN = "use_z_for_shift_down"
+    private const val KEY_USE_Z_FOR_SHIFT_DOWN = KEY_USE_Z_SHIFT_DOWN
     private const val KEY_AUTO_START = "auto_start_on_wake"
     private const val KEY_FLOATING_HUD = "floating_hud_pill_enabled"
     private const val KEY_HAPTIC = "haptic_feedback_enabled"
@@ -39,20 +40,52 @@ object ButtonMappingStore {
         mode: OperatingMode,
         button: ClickButton,
         pressType: PressType,
-        customBindings: Map<ModeButtonBindingKey, MappedTargetAction>
+        customBindings: Map<ModeButtonBindingKey, MappedTargetAction> = emptyMap(),
+        rightPodOnlyNoZwift: Boolean = false,
+        useZForShiftDownInSinglePodMode: Boolean = false
     ): MappedTargetAction {
         val canonical = button.canonicalButton
         val key = ModeButtonBindingKey(mode, canonical, pressType)
         customBindings[key]?.let { return it }
-        return defaultActionFor(mode, canonical, pressType)
+
+        if (rightPodOnlyNoZwift && useZForShiftDownInSinglePodMode) {
+            if (canonical == ClickButton.Z && pressType == PressType.SINGLE_CLICK) {
+                when (mode) {
+                    OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
+                    OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH,
+                    OperatingMode.MODE_4_MYWHOOSH_ONLY,
+                    OperatingMode.MODE_5_UBUNTU_ANKICONNECT -> {
+                        return MappedTargetAction.MW_SHIFT_DOWN
+                    }
+                    else -> {}
+                }
+            }
+        }
+
+        return defaultActionFor(mode, canonical, pressType, rightPodOnlyNoZwift, useZForShiftDownInSinglePodMode)
     }
 
     fun defaultActionFor(
         mode: OperatingMode,
         button: ClickButton,
-        pressType: PressType
+        pressType: PressType,
+        rightPodOnlyNoZwift: Boolean = false,
+        useZForShiftDownInSinglePodMode: Boolean = false
     ): MappedTargetAction {
         val canonical = button.canonicalButton
+        if (rightPodOnlyNoZwift && useZForShiftDownInSinglePodMode) {
+            if (canonical == ClickButton.Z && pressType == PressType.SINGLE_CLICK) {
+                when (mode) {
+                    OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
+                    OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH,
+                    OperatingMode.MODE_4_MYWHOOSH_ONLY,
+                    OperatingMode.MODE_5_UBUNTU_ANKICONNECT -> {
+                        return MappedTargetAction.MW_SHIFT_DOWN
+                    }
+                    else -> {}
+                }
+            }
+        }
         return when (mode) {
             OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
             OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH,

@@ -13,6 +13,28 @@ import com.ankiride.bridge.core.MappedTargetAction
 import com.ankiride.bridge.core.MyWhooshAction
 
 object FeedbackCueManager {
+    private var cachedToneGenerator: ToneGenerator? = null
+
+    @Synchronized
+    private fun getToneGenerator(): ToneGenerator? {
+        if (cachedToneGenerator == null) {
+            try {
+                cachedToneGenerator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 45)
+            } catch (_: Exception) {
+            }
+        }
+        return cachedToneGenerator
+    }
+
+    @Synchronized
+    fun release() {
+        try {
+            cachedToneGenerator?.release()
+        } catch (_: Exception) {
+        } finally {
+            cachedToneGenerator = null
+        }
+    }
 
     fun triggerCue(context: Context, target: MappedTargetAction, config: AppConfiguration) {
         if (target == MappedTargetAction.NONE) return
@@ -56,6 +78,7 @@ object FeedbackCueManager {
         }
     }
 
+    @Synchronized
     private fun triggerAudioTone(target: MappedTargetAction) {
         try {
             val toneType = when {
@@ -66,8 +89,7 @@ object FeedbackCueManager {
                 target.ankiAction != null -> ToneGenerator.TONE_PROP_BEEP2
                 else -> ToneGenerator.TONE_PROP_BEEP
             }
-            val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 45)
-            toneGen.startTone(toneType, 45)
+            getToneGenerator()?.startTone(toneType, 45)
         } catch (_: Exception) {
         }
     }

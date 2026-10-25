@@ -9,6 +9,7 @@ import com.ankiride.bridge.core.MyWhooshAction
 import kotlinx.coroutines.*
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
@@ -18,6 +19,9 @@ class OpenBikeControlClient(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 ) {
     companion object {
+        const val DEFAULT_PORT = 21587
+        const val MAX_CONNECTED_CLIENTS = 4
+        const val CLIENT_SO_TIMEOUT_MS = 60_000
         const val SERVICE_TYPE = "_openbikecontrol._tcp."
         const val SERVICE_NAME = "AnkiRideBridge"
         const val OPENBIKE_BLE_SERVICE_UUID = "d273f680-d548-419d-b9d1-fa0472345229"
@@ -36,11 +40,16 @@ class OpenBikeControlClient(
     private var registrationListener: NsdManager.RegistrationListener? = null
     val connectedClients = CopyOnWriteArrayList<Socket>()
 
-    fun startServer(port: Int = 21587) {
+    fun startServer(port: Int = DEFAULT_PORT, bindLocalhostOnly: Boolean = false) {
         if (serverSocket != null) return
         acceptJob = scope.launch(Dispatchers.IO) {
             try {
-                val srv = ServerSocket(port)
+                val bindAddr = if (bindLocalhostOnly) {
+                    InetAddress.getByName("127.0.0.1")
+                } else {
+                    InetAddress.getByName("0.0.0.0")
+                }
+                val srv = ServerSocket(port, 50, bindAddr)
                 serverSocket = srv
                 DiagnosticLogger.info(
                     LogCategory.MYWHOOSH,
@@ -52,6 +61,15 @@ class OpenBikeControlClient(
                     val rawHost = client.inetAddress?.hostAddress ?: ""
                     if (LanAddressValidator.isLocalOrLanAddress(rawHost)) {
                         client.tcpNoDelay = true
+                        client.soTimeout = CLIENT_SO_TIMEOUT_MS
+                        connectedClients.removeIf { it.isClosed || !it.isConnected }
+                        while (connectedClients.size >= MAX_CONNECTED_CLIENTS) {
+                            val oldest = if (connectedClients.isNotEmpty()) connectedClients.removeAt(0) else break
+                            try {
+                                oldest.close()
+                            } catch (_: Exception) {
+                            }
+                        }
                         connectedClients.add(client)
                         DiagnosticLogger.info(
                             LogCategory.MYWHOOSH,
@@ -73,16 +91,34 @@ class OpenBikeControlClient(
         }
     }
 
-    private fun listenToClientMessages(client: Socket, host: String) {
+    private fun listenToClientMessages(client: Socket, host: String = client.inetAddress?.hostAddress ?: "") {
         scope.launch(Dispatchers.IO) {
             val buf = ByteArray(256)
+            var windowStartMs = System.currentTimeMillis()
+            var logCountInWindow = 0
             try {
                 val input: InputStream = client.getInputStream()
                 while (isActive && !client.isClosed) {
-                    val readCount = input.read(buf)
+                    val readCount = try {
+                        input.read(buf)
+                    } catch (_: java.net.SocketTimeoutException) {
+                        continue
+                    }
                     if (readCount <= 0) break
                     val packet = buf.copyOfRange(0, readCount)
-                    parseIncomingAppPacket(host, packet)
+
+                    val now = System.currentTimeMillis()
+                    if (now - windowStartMs >= 1000L) {
+                        windowStartMs = now
+                        logCountInWindow = 0
+                    }
+                    val canLog = if (logCountInWindow < 20) {
+                        logCountInWindow++
+                        true
+                    } else {
+                        false
+                    }
+                    parseIncomingAppPacket(host, packet, canLog)
                 }
             } catch (_: Exception) {
             } finally {
@@ -92,7 +128,7 @@ class OpenBikeControlClient(
         }
     }
 
-    private fun parseIncomingAppPacket(host: String, data: ByteArray) {
+    private fun parseIncomingAppPacket(host: String, data: ByteArray, canLog: Boolean = true) {
         if (data.isEmpty()) return
         when (data[0]) {
             MSG_APP_INFO -> {
@@ -109,27 +145,36 @@ class OpenBikeControlClient(
                         val btnsHex = if (btnCountIdx + 1 < data.size) {
                             data.copyOfRange(btnCountIdx + 1, data.size).joinToString(" ") { "0x%02X".format(it) }
                         } else "ALL"
-                        DiagnosticLogger.info(
-                            LogCategory.MYWHOOSH,
-                            "Received 0x04 AppInfo from $host: app='$appId' v$appVer (proto=$ver, supportedButtons($btnCount)=[$btnsHex])"
-                        )
+                        if (canLog) {
+                            DiagnosticLogger.info(
+                                LogCategory.MYWHOOSH,
+                                "Received 0x04 AppInfo from $host: app='$appId' v$appVer (proto=$ver, supportedButtons($btnCount)=[$btnsHex])"
+                            )
+                        }
                     }
                 } catch (_: Exception) {
-                    val hex = data.joinToString(" ") { "%02X".format(it) }
-                    DiagnosticLogger.info(LogCategory.MYWHOOSH, "Received 0x04 AppInfo from $host: [$hex]")
+                    if (canLog) {
+                        val hex = data.joinToString(" ") { "%02X".format(it) }
+                        DiagnosticLogger.info(LogCategory.MYWHOOSH, "Received 0x04 AppInfo from $host: [$hex]")
+                    }
                 }
             }
             MSG_HAPTIC_FEEDBACK -> {
-                val hex = data.joinToString(" ") { "%02X".format(it) }
-                DiagnosticLogger.info(LogCategory.MYWHOOSH, "MyWhoosh confirmed action with 0x03 Haptic packet: [$hex]")
+                if (canLog) {
+                    val hex = data.joinToString(" ") { "%02X".format(it) }
+                    DiagnosticLogger.info(LogCategory.MYWHOOSH, "MyWhoosh confirmed action with 0x03 Haptic packet: [$hex]")
+                }
             }
             else -> {
-                val hex = data.joinToString(" ") { "%02X".format(it) }
-                DiagnosticLogger.info(LogCategory.MYWHOOSH, "Incoming packet from MyWhoosh ($host): [$hex]")
+                if (canLog) {
+                    val hex = data.joinToString(" ") { "%02X".format(it) }
+                    DiagnosticLogger.info(LogCategory.MYWHOOSH, "Incoming packet from MyWhoosh ($host): [$hex]")
+                }
             }
         }
     }
 
+    fun connectedClientCount(): Int = connectedClients.size
     fun hasConnectedClients(): Boolean = connectedClients.any { !it.isClosed && it.isConnected }
 
     suspend fun sendAction(ip: String, port: Int, action: MyWhooshAction): Boolean = withContext(Dispatchers.IO) {

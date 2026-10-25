@@ -2,6 +2,7 @@ package com.ankiride.bridge.anki
 
 import com.ankiride.bridge.core.AnkiAction
 import com.ankiride.bridge.core.AppConfiguration
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -112,5 +113,49 @@ class DesktopAnkiDispatcherTest {
 
         val ok = dispatcher.dispatch(AnkiAction.FLIP_CARD)
         assertFalse(ok)
+    }
+
+    @Test
+    fun testDispatcherExecutorUsesArrayBlockingQueueAndDiscardOldestPolicy() {
+        val dispatcher = DesktopAnkiDispatcher(configProvider = { AppConfiguration() })
+        val executor = dispatcher.executor
+
+        assertTrue(
+            "Executor queue must be ArrayBlockingQueue",
+            executor.queue is java.util.concurrent.ArrayBlockingQueue
+        )
+        assertEquals("Queue capacity must be 1", 1, executor.queue.remainingCapacity() + executor.queue.size)
+        assertTrue(
+            "RejectedExecutionHandler must be DiscardOldestPolicy",
+            executor.rejectedExecutionHandler is java.util.concurrent.ThreadPoolExecutor.DiscardOldestPolicy
+        )
+    }
+
+    @Test
+    fun testDispatchAsyncEvictsOldestWhenQueueFull() {
+        val server = ServerSocket(0)
+        val port = server.localPort
+        try {
+            val config = AppConfiguration(
+                ubuntuAnkiConnectHost = "127.0.0.1",
+                ubuntuAnkiConnectPort = port
+            )
+            val dispatcher = DesktopAnkiDispatcher(configProvider = { config })
+
+            val latch = java.util.concurrent.CountDownLatch(1)
+            dispatcher.executor.execute {
+                latch.await(300, java.util.concurrent.TimeUnit.MILLISECONDS)
+            }
+            // Add task 1 (fills queue)
+            dispatcher.dispatchAsync(AnkiAction.FLIP_CARD)
+            // Add task 2 (evicts task 1 via DiscardOldestPolicy without throwing RejectedExecutionException)
+            dispatcher.dispatchAsync(AnkiAction.FLIP_OR_GOOD)
+
+            latch.countDown()
+            dispatcher.executor.shutdown()
+            assertTrue(dispatcher.executor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS))
+        } finally {
+            server.close()
+        }
     }
 }

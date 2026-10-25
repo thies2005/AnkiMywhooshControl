@@ -50,6 +50,8 @@ compose.desktop {
             description = "Zwift Click v2 Bridge for Desktop Anki and MyWhoosh"
             vendor = "AnkiRide"
 
+            appResourcesRootDir.set(project.layout.projectDirectory.dir("build/packaged-resources"))
+
             modules(
                 "java.instrument",
                 "java.management",
@@ -86,6 +88,40 @@ compose.desktop {
                     """.trimIndent()
                 }
             }
+        }
+    }
+}
+
+tasks.withType<AbstractCopyTask>().configureEach {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+val packagedResourcesDir = project.layout.projectDirectory.dir("build/packaged-resources")
+val packagedResourceSubDirs = listOf("common", "linux-x64", "macos-arm64", "macos-x64", "windows-x64")
+
+// Ensure directories exist immediately at configuration time
+packagedResourceSubDirs.forEach { sub ->
+    packagedResourcesDir.dir(sub).asFile.mkdirs()
+}
+
+val preparePackagedResources = tasks.register("preparePackagedResources") {
+    description = "Ensures packaged-resources directories exist before Compose Desktop packaging."
+    doLast {
+        packagedResourceSubDirs.forEach { sub ->
+            packagedResourcesDir.dir(sub).asFile.mkdirs()
+        }
+    }
+}
+
+tasks.matching {
+    it.name.contains("prepareAppResources", ignoreCase = true) ||
+    it.name.startsWith("createDistributable") ||
+    it.name.startsWith("package")
+}.configureEach {
+    dependsOn(preparePackagedResources)
+    doFirst {
+        packagedResourceSubDirs.forEach { sub ->
+            packagedResourcesDir.dir(sub).asFile.mkdirs()
         }
     }
 }

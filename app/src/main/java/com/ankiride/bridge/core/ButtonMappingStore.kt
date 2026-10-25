@@ -3,6 +3,7 @@ package com.ankiride.bridge.core
 import android.content.Context
 
 object ButtonMappingStore {
+    const val KEY_USE_Z_SHIFT_DOWN = "use_z_for_shift_down"
     private const val PREFS_BINDINGS = "ankiride_per_mode_bindings_v4"
     private const val PREFS_SETTINGS = "ankiride_app_settings_v4"
 
@@ -20,20 +21,52 @@ object ButtonMappingStore {
         mode: OperatingMode,
         button: ClickButton,
         pressType: PressType,
-        customBindings: Map<ModeButtonBindingKey, MappedTargetAction>
+        customBindings: Map<ModeButtonBindingKey, MappedTargetAction> = emptyMap(),
+        rightPodOnlyNoZwift: Boolean = false,
+        useZForShiftDownInSinglePodMode: Boolean = false
     ): MappedTargetAction {
         val canonical = button.canonicalButton
         val key = ModeButtonBindingKey(mode, canonical, pressType)
         customBindings[key]?.let { return it }
-        return defaultActionFor(mode, canonical, pressType)
+
+        if (rightPodOnlyNoZwift && useZForShiftDownInSinglePodMode) {
+            if (canonical == ClickButton.Z && pressType == PressType.SINGLE_CLICK) {
+                when (mode) {
+                    OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
+                    OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH,
+                    OperatingMode.MODE_4_MYWHOOSH_ONLY,
+                    OperatingMode.MODE_5_UBUNTU_ANKICONNECT -> {
+                        return MappedTargetAction.MW_SHIFT_DOWN
+                    }
+                    else -> {}
+                }
+            }
+        }
+
+        return defaultActionFor(mode, canonical, pressType, rightPodOnlyNoZwift, useZForShiftDownInSinglePodMode)
     }
 
     fun defaultActionFor(
         mode: OperatingMode,
         button: ClickButton,
-        pressType: PressType
+        pressType: PressType,
+        rightPodOnlyNoZwift: Boolean = false,
+        useZForShiftDownInSinglePodMode: Boolean = false
     ): MappedTargetAction {
         val canonical = button.canonicalButton
+        if (rightPodOnlyNoZwift && useZForShiftDownInSinglePodMode) {
+            if (canonical == ClickButton.Z && pressType == PressType.SINGLE_CLICK) {
+                when (mode) {
+                    OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
+                    OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH,
+                    OperatingMode.MODE_4_MYWHOOSH_ONLY,
+                    OperatingMode.MODE_5_UBUNTU_ANKICONNECT -> {
+                        return MappedTargetAction.MW_SHIFT_DOWN
+                    }
+                    else -> {}
+                }
+            }
+        }
         return when (mode) {
             OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
             OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH,
@@ -127,6 +160,7 @@ object ButtonMappingStore {
         return AppConfiguration(
             mode = mode,
             rightPodOnlyNoZwift = prefs.getBoolean(KEY_RIGHT_POD_ONLY, true),
+            useZForShiftDownInSinglePodMode = prefs.getBoolean(KEY_USE_Z_SHIFT_DOWN, true),
             autoStartOnControllerWake = prefs.getBoolean(KEY_AUTO_START, true),
             floatingHudPillEnabled = prefs.getBoolean(KEY_FLOATING_HUD, false), // Default OFF
             hapticFeedbackEnabled = prefs.getBoolean(KEY_HAPTIC, false),        // Default OFF
@@ -142,6 +176,7 @@ object ButtonMappingStore {
         context.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE).edit()
             .putString(KEY_MODE, config.mode.name)
             .putBoolean(KEY_RIGHT_POD_ONLY, config.rightPodOnlyNoZwift)
+            .putBoolean(KEY_USE_Z_SHIFT_DOWN, config.useZForShiftDownInSinglePodMode)
             .putBoolean(KEY_AUTO_START, config.autoStartOnControllerWake)
             .putBoolean(KEY_FLOATING_HUD, config.floatingHudPillEnabled)
             .putBoolean(KEY_HAPTIC, config.hapticFeedbackEnabled)

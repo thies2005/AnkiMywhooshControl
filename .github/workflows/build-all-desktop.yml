@@ -29,6 +29,11 @@ jobs:
           java-version: '21'
           cache: 'gradle'
 
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Ensure gradlew is executable
         run: chmod +x gradlew
 
@@ -42,12 +47,55 @@ jobs:
       - name: Run All Unit Tests
         run: ./gradlew :desktop:test --no-daemon -PskipAndroid=true
 
+      - name: Build Standalone BLE Worker Binary (PyInstaller)
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            python -m pip install --upgrade pip bleak pyinstaller dbus-fast
+          else
+            python -m pip install --upgrade pip bleak pyinstaller
+          fi
+
+          WORKER_SRC="desktop/src/main/resources/ble/zwift_ble_worker.py"
+          if [ ! -f "$WORKER_SRC" ]; then
+            WORKER_SRC="desktop/src/main/resources/zwift_ble_worker.py"
+          fi
+
+          echo "Compiling $WORKER_SRC into standalone binary..."
+          pyinstaller --clean --noconfirm --onefile --name zwift_ble_worker "$WORKER_SRC"
+
+          mkdir -p desktop/build/packaged-resources/common
+          mkdir -p desktop/build/packaged-resources/linux-x64
+          mkdir -p desktop/build/packaged-resources/macos-arm64
+          mkdir -p desktop/build/packaged-resources/macos-x64
+          mkdir -p desktop/build/packaged-resources/windows-x64
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp dist/zwift_ble_worker.exe desktop/build/packaged-resources/common/
+            echo "Copied Windows binary to packaged-resources/common"
+          else
+            chmod +x dist/zwift_ble_worker
+            cp dist/zwift_ble_worker desktop/build/packaged-resources/common/
+            chmod +x desktop/build/packaged-resources/common/zwift_ble_worker
+            echo "Copied Unix binary to packaged-resources/common and set executable permissions"
+          fi
+
       - name: Package Native Installer & App Bundle for Current OS
         run: ./gradlew createDistributable packageDistributionForCurrentOS --no-daemon -PskipAndroid=true
 
       - name: Run Self-Test on Built Distributable Binary
         run: |
+          echo "Verifying bundled BLE worker binary in packaged application resources..."
           if [ "${{ runner.os }}" = "Linux" ]; then
+            WORKER_BIN=$(find build/compose/binaries/main/app desktop/build/compose/binaries/main/app -type f -name "zwift_ble_worker" 2>/dev/null | head -n 1)
+            if [ -n "$WORKER_BIN" ]; then
+              echo "Verified bundled zwift_ble_worker present at: $WORKER_BIN"
+              chmod +x "$WORKER_BIN"
+              ls -la "$WORKER_BIN"
+            else
+              echo "ERROR: Standalone zwift_ble_worker not found inside packaged app resources!"
+              exit 1
+            fi
+
             BIN=$(find build/compose/binaries/main/app desktop/build/compose/binaries/main/app -type f -name "AnkiRideBridge" -path "*/bin/*" 2>/dev/null | head -n 1)
             if [ -n "$BIN" ]; then
               chmod +x "$BIN"
@@ -57,6 +105,16 @@ jobs:
               exit 1
             fi
           elif [ "${{ runner.os }}" = "macOS" ]; then
+            WORKER_BIN=$(find build/compose/binaries/main/app desktop/build/compose/binaries/main/app -type f -name "zwift_ble_worker" 2>/dev/null | head -n 1)
+            if [ -n "$WORKER_BIN" ]; then
+              echo "Verified bundled zwift_ble_worker present at: $WORKER_BIN"
+              chmod +x "$WORKER_BIN"
+              ls -la "$WORKER_BIN"
+            else
+              echo "ERROR: Standalone zwift_ble_worker not found inside packaged app resources!"
+              exit 1
+            fi
+
             BIN=$(find build/compose/binaries/main/app desktop/build/compose/binaries/main/app -type f -name "AnkiRideBridge" -path "*/MacOS/*" 2>/dev/null | head -n 1)
             if [ -n "$BIN" ]; then
               chmod +x "$BIN"
@@ -66,6 +124,15 @@ jobs:
               exit 1
             fi
           elif [ "${{ runner.os }}" = "Windows" ]; then
+            WORKER_BIN=$(find build/compose/binaries/main/app desktop/build/compose/binaries/main/app -type f -name "zwift_ble_worker.exe" 2>/dev/null | head -n 1)
+            if [ -n "$WORKER_BIN" ]; then
+              echo "Verified bundled zwift_ble_worker.exe present at: $WORKER_BIN"
+              ls -la "$WORKER_BIN"
+            else
+              echo "ERROR: Standalone zwift_ble_worker.exe not found inside packaged app resources!"
+              exit 1
+            fi
+
             BIN=$(find build/compose/binaries/main/app desktop/build/compose/binaries/main/app -type f -name "AnkiRideBridge.exe" 2>/dev/null | head -n 1)
             if [ -n "$BIN" ]; then
               "$BIN" --self-test
