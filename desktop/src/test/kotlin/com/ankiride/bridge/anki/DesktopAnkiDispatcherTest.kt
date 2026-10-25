@@ -64,6 +64,19 @@ class DesktopAnkiDispatcherTest {
         try {
             executor.submit {
                 val socket = server.accept()
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+                var line = reader.readLine()
+                var len = 0
+                while (line != null && line.isNotEmpty()) {
+                    if (line.startsWith("Content-Length:", ignoreCase = true)) {
+                        len = line.substringAfter(":").trim().toInt()
+                    }
+                    line = reader.readLine()
+                }
+                if (len > 0) {
+                    val body = CharArray(len)
+                    reader.read(body, 0, len)
+                }
                 val resp = """{"result":null,"error":null}"""
                 socket.getOutputStream().write("HTTP/1.1 200 OK\r\nContent-Length: ${resp.length}\r\nConnection: close\r\n\r\n$resp".toByteArray(Charsets.UTF_8))
                 socket.getOutputStream().flush()
