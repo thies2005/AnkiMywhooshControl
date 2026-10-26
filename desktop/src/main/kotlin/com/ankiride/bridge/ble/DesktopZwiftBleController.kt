@@ -406,21 +406,59 @@ class DesktopZwiftBleController(
         // 1. System.getProperty("compose.application.resources.dir")
         val composeResDir = System.getProperty("compose.application.resources.dir")
         if (!composeResDir.isNullOrBlank()) {
-            val rootCandidate = File(composeResDir, binaryName)
-            if (rootCandidate.exists() && rootCandidate.canExecute()) return rootCandidate
-            val binCandidate = File(File(composeResDir, "bin"), binaryName)
-            if (binCandidate.exists() && binCandidate.canExecute()) return binCandidate
-            val bleCandidate = File(File(composeResDir, "ble"), binaryName)
-            if (bleCandidate.exists() && bleCandidate.canExecute()) return bleCandidate
+            val candidates = listOf(
+                File(composeResDir, binaryName),
+                File(File(composeResDir, "bin"), binaryName),
+                File(File(composeResDir, "ble"), binaryName)
+            )
+            for (candidate in candidates) {
+                if (candidate.exists() && candidate.isFile) {
+                    if (candidate.canExecute()) return candidate
+                    // On Linux .deb / packaged installs (e.g. /opt/ankiridebridge/lib/app/resources),
+                    // jpackage may strip the +x bit (0644) and the directory is root-owned.
+                    // Copy the bundled binary to ~/.ankiride/bin and set 0700 executable permissions.
+                    val staged = stageNativeBinaryToHome(candidate, binaryName)
+                    if (staged != null) return staged
+                }
+            }
         }
 
         // 2. File(System.getProperty("user.home"), ".ankiride/bin")
         val homeBinCandidate = File(File(System.getProperty("user.home"), ".ankiride/bin"), binaryName)
-        if (homeBinCandidate.exists() && homeBinCandidate.canExecute()) {
-            return homeBinCandidate
+        if (homeBinCandidate.exists() && homeBinCandidate.isFile) {
+            if (!homeBinCandidate.canExecute()) {
+                runCatching { homeBinCandidate.setExecutable(true, true) }
+            }
+            if (homeBinCandidate.canExecute()) {
+                return homeBinCandidate
+            }
         }
 
         return null
+    }
+
+    private fun stageNativeBinaryToHome(sourceFile: File, binaryName: String): File? {
+        return try {
+            val binDir = File(System.getProperty("user.home"), ".ankiride/bin")
+            if (!binDir.exists()) {
+                binDir.mkdirs()
+            }
+            runCatching {
+                Files.setPosixFilePermissions(binDir.toPath(), PosixFilePermissions.fromString("rwx------"))
+            }
+            val stagedFile = File(binDir, binaryName)
+            if (!stagedFile.exists() || stagedFile.length() != sourceFile.length() || stagedFile.lastModified() < sourceFile.lastModified()) {
+                sourceFile.copyTo(stagedFile, overwrite = true)
+            }
+            stagedFile.setExecutable(true, true)
+            runCatching {
+                Files.setPosixFilePermissions(stagedFile.toPath(), PosixFilePermissions.fromString("rwx------"))
+            }
+            if (stagedFile.canExecute()) stagedFile else null
+        } catch (e: Exception) {
+            DiagnosticLogger.warn(LogCategory.BLE, "Failed to stage bundled BLE worker binary to ~/.ankiride/bin: ${e.message}")
+            null
+        }
     }
 
     fun getOrBootstrapPythonExecutable(): String? {

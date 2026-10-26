@@ -316,4 +316,32 @@ class DesktopZwiftBleControllerTest {
             assertEquals("Directory permissions must be 0700 (rwx------)", expectedPerms, dirPerms)
         }
     }
+
+    @Test
+    fun testFindNativeWorkerBinaryStagesNonExecutableResourceToHomeBin() {
+        val tempResDir = java.nio.file.Files.createTempDirectory("ankiride_res_test").toFile()
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        val binaryName = if (isWindows) "zwift_ble_worker.exe" else "zwift_ble_worker"
+        val nonExecResource = File(tempResDir, binaryName)
+        val stagedHomeFile = File(File(System.getProperty("user.home"), ".ankiride/bin"), binaryName)
+        val prevProp = System.getProperty("compose.application.resources.dir")
+        try {
+            nonExecResource.writeText("#!/bin/sh\necho OK\n")
+            nonExecResource.setExecutable(false)
+            System.setProperty("compose.application.resources.dir", tempResDir.absolutePath)
+
+            val resolved = controller.findNativeWorkerBinary()
+            assertNotNull("findNativeWorkerBinary must resolve even when bundled resource lacks +x bit", resolved)
+            assertTrue("Resolved binary must be executable", resolved!!.canExecute())
+        } finally {
+            if (prevProp != null) {
+                System.setProperty("compose.application.resources.dir", prevProp)
+            } else {
+                System.clearProperty("compose.application.resources.dir")
+            }
+            stagedHomeFile.delete()
+            nonExecResource.delete()
+            tempResDir.delete()
+        }
+    }
 }
