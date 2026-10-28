@@ -80,4 +80,23 @@ object DesktopMyWhooshRobot {
             false
         }
     }
+
+    fun inspectFocusedWindow(): String {
+        return try {
+            val os = System.getProperty("os.name", "").lowercase()
+            if (os.contains("linux")) {
+                val proc = ProcessBuilder("xdotool", "getactivewindow", "getwindowname").start()
+                val title = proc.inputStream.bufferedReader().readText().trim()
+                if (proc.waitFor() == 0 && title.isNotEmpty()) {
+                    title
+                } else {
+                    "Unknown Linux Window"
+                }
+            } else {
+                "Platform window inspection not available on $os"
+            }
+        } catch (_: Exception) {
+            "Unable to inspect focused window"
+        }
+    }
 }

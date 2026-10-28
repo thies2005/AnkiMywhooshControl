@@ -91,8 +91,9 @@ object ButtonMappingStore {
             OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH,
             OperatingMode.MODE_5_UBUNTU_ANKICONNECT -> {
                 // Default 4-Colorful-Button Split for all Combined Ride + Anki Modes (Modes 1, 2, and 5):
-                // Z (Top Orange) = Shift Up (+), A (Bottom Blue) = Shift Down (–)
-                // Y (Left Yellow) = Anki Didn't Know (Again), B (Right Green) = Anki Good
+                // Z (Left Orange) = Shift Up (+), A (Right Green) = Shift Down (–)
+                // Y (Top Cyan) = Anki Didn't Know (Again), B (Bottom Pink) = Anki Good
+                // Bottom '+' Circle (Below B) = Shift Up (+), Bottom '–' Circle (Below v) = Shift Down (–)
                 when (canonical) {
                     ClickButton.Z -> MappedTargetAction.MW_SHIFT_UP
                     ClickButton.A -> MappedTargetAction.MW_SHIFT_DOWN

@@ -218,6 +218,7 @@ fun main(args: Array<String>) {
         val connectedRightMac by bleController.connectedRightMac.collectAsState()
         val connectedLeftMac by bleController.connectedLeftMac.collectAsState()
         val lastActionText by actionRouter.lastRoutedActionLabel.collectAsState()
+        val connectedClientCount by openBikeClient.connectedClientCountFlow.collectAsState()
 
         val updateConfig: (AppConfiguration) -> Unit = { newConfig ->
             config = newConfig
@@ -286,7 +287,7 @@ fun main(args: Array<String>) {
         )
 
         // Main Desktop Window
-        val mainWindowState = rememberWindowState(width = 980.dp, height = 860.dp)
+        val mainWindowState = rememberWindowState(width = 1320.dp, height = 880.dp)
         Window(
             onCloseRequest = {
                 // Minimize to tray
@@ -309,7 +310,9 @@ fun main(args: Array<String>) {
                         bleState = bleState,
                         connectedRightMac = connectedRightMac,
                         connectedLeftMac = connectedLeftMac,
-                        hasMyWhooshClient = openBikeClient.hasConnectedClients(),
+                        hasMyWhooshClient = connectedClientCount > 0,
+                        lastRoutedActionLabel = lastActionText,
+                        onMinimizeToTray = { isMainWindowVisible = false },
                         onSimulateGesture = { button, pressType ->
                             bleController.emitSimulatedGesture(button, pressType)
                         },

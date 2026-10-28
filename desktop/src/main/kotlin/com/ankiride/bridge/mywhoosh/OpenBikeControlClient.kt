@@ -38,6 +38,9 @@ class OpenBikeControlClient(
     private var acceptJob: Job? = null
     val connectedClients = CopyOnWriteArrayList<Socket>()
 
+    private val _connectedClientCountFlow = MutableStateFlow(0)
+    val connectedClientCountFlow: StateFlow<Int> = _connectedClientCountFlow.asStateFlow()
+
     private val _connectedAppInfo = MutableStateFlow<String?>(null)
     val connectedAppInfo: StateFlow<String?> = _connectedAppInfo.asStateFlow()
 
@@ -77,6 +80,7 @@ class OpenBikeControlClient(
                             }
                         }
                         connectedClients.add(client)
+                        _connectedClientCountFlow.value = connectedClients.size
                         DiagnosticLogger.info(
                             LogCategory.MYWHOOSH,
                             "MyWhoosh connected from $rawHost (tcpNoDelay=true, clients=${connectedClients.size})"
@@ -129,6 +133,7 @@ class OpenBikeControlClient(
             } catch (_: Exception) {
             } finally {
                 connectedClients.remove(client)
+                _connectedClientCountFlow.value = connectedClients.size
                 if (connectedClients.isEmpty()) {
                     _connectedAppInfo.value = null
                 }
@@ -201,12 +206,14 @@ class OpenBikeControlClient(
         for (client in connectedClients) {
             if (client.isClosed || !client.isConnected) {
                 connectedClients.remove(client)
+                _connectedClientCountFlow.value = connectedClients.size
                 continue
             }
             if (sendRawBytes(client, pressPacket)) {
                 delivered = true
             } else {
                 connectedClients.remove(client)
+                _connectedClientCountFlow.value = connectedClients.size
             }
         }
         if (delivered) {
@@ -248,6 +255,7 @@ class OpenBikeControlClient(
             }
         }
         connectedClients.clear()
+        _connectedClientCountFlow.value = 0
         _connectedAppInfo.value = null
 
         try {

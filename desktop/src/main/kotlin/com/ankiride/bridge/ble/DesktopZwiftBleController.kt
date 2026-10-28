@@ -61,15 +61,27 @@ class DesktopZwiftBleController(
     private var workerJob: Job? = null
     private var tickerJob: Job? = null
     private var currentConfig = AppConfiguration()
+    @Volatile private var isRunningBridge = false
 
     fun updateConfiguration(config: AppConfiguration) {
+        val needsRestart = isRunningBridge && (
+            currentConfig.rightPodOnlyNoZwift != config.rightPodOnlyNoZwift ||
+            currentConfig.pinnedRightPodMac != config.pinnedRightPodMac ||
+            currentConfig.pinnedLeftPodMac != config.pinnedLeftPodMac ||
+            currentConfig.leftPodAutoReconnectSec != config.leftPodAutoReconnectSec
+        )
         currentConfig = config
+        if (needsRestart) {
+            DiagnosticLogger.info(LogCategory.BLE, "BLE pod configuration changed; restarting BLE worker automatically...")
+            startBleWorkerProcess(config)
+        }
     }
 
     override fun startScanAndConnect(config: AppConfiguration) {
         currentConfig = config
         disconnect()
 
+        isRunningBridge = true
         _connectionState.value = BleConnectionState.SCANNING
         DiagnosticLogger.info(LogCategory.BLE, "Starting Desktop BLE Controller (1-Pod Default=${config.rightPodOnlyNoZwift})")
 
@@ -93,96 +105,142 @@ class DesktopZwiftBleController(
     }
 
     private fun startBleWorkerProcess(config: AppConfiguration) {
+        currentConfig = config
         workerJob?.cancel()
-        workerJob = scope.launch(Dispatchers.IO) {
+        workerProcess?.let { proc ->
             try {
-                val nativeBinary = findNativeWorkerBinary()
-                val command: MutableList<String>
+                proc.destroy()
+            } catch (_: Exception) {
+            }
+        }
+        workerProcess = null
 
-                if (nativeBinary != null) {
-                    DiagnosticLogger.info(LogCategory.BLE, "Spawning standalone native BLE worker binary: ${nativeBinary.absolutePath}")
-                    command = mutableListOf(
-                        nativeBinary.absolutePath,
-                        "--right-only", config.rightPodOnlyNoZwift.toString()
-                    )
-                } else {
-                    val scriptFile = extractWorkerScript()
-                    if (scriptFile == null || !scriptFile.exists()) {
-                        DiagnosticLogger.error(LogCategory.BLE, "Unable to extract or locate zwift_ble_worker.py")
-                        _connectionState.value = BleConnectionState.ERROR
-                        return@launch
-                    }
+        workerJob = scope.launch(Dispatchers.IO) {
+            while (isActive && isRunningBridge) {
+                var process: Process? = null
+                var stderrJob: Job? = null
+                try {
+                    val nativeBinary = findNativeWorkerBinary()
+                    val command: MutableList<String>
 
-                    val pythonCmd = getOrBootstrapPythonExecutable()
-                    if (pythonCmd == null) {
-                        DiagnosticLogger.error(LogCategory.BLE, "Python executable with 'bleak' could not be resolved or bootstrapped")
-                        _connectionState.value = BleConnectionState.ERROR
-                        return@launch
-                    }
-
-                    command = mutableListOf(
-                        pythonCmd,
-                        scriptFile.absolutePath,
-                        "--right-only", config.rightPodOnlyNoZwift.toString()
-                    )
-                }
-
-                if (!config.pinnedRightPodMac.isNullOrBlank()) {
-                    if (isValidMacOrUuid(config.pinnedRightPodMac)) {
-                        command.add("--pinned-right")
-                        command.add(config.pinnedRightPodMac!!.trim())
+                    if (nativeBinary != null) {
+                        DiagnosticLogger.info(LogCategory.BLE, "Spawning standalone native BLE worker binary: ${nativeBinary.absolutePath}")
+                        command = mutableListOf(
+                            nativeBinary.absolutePath,
+                            "--right-only", currentConfig.rightPodOnlyNoZwift.toString()
+                        )
                     } else {
-                        DiagnosticLogger.warn(LogCategory.BLE, "Ignoring invalid pinnedRightPodMac: '${config.pinnedRightPodMac}'")
-                    }
-                }
-                if (!config.pinnedLeftPodMac.isNullOrBlank()) {
-                    if (isValidMacOrUuid(config.pinnedLeftPodMac)) {
-                        command.add("--pinned-left")
-                        command.add(config.pinnedLeftPodMac!!.trim())
-                    } else {
-                        DiagnosticLogger.warn(LogCategory.BLE, "Ignoring invalid pinnedLeftPodMac: '${config.pinnedLeftPodMac}'")
-                    }
-                }
+                        val scriptFile = extractWorkerScript()
+                        if (scriptFile == null || !scriptFile.exists()) {
+                            DiagnosticLogger.error(LogCategory.BLE, "Unable to extract or locate zwift_ble_worker.py")
+                            _connectionState.value = BleConnectionState.ERROR
+                            if (isRunningBridge) delay(2000L)
+                            continue
+                        }
 
-                DiagnosticLogger.info(LogCategory.BLE, "Spawning BLE worker: ${command.joinToString(" ")}")
-                val pb = ProcessBuilder(command)
-                pb.redirectErrorStream(false)
-                val process = pb.start()
-                workerProcess = process
+                        val pythonCmd = getOrBootstrapPythonExecutable()
+                        if (pythonCmd == null) {
+                            DiagnosticLogger.error(LogCategory.BLE, "Python executable with 'bleak' could not be resolved or bootstrapped")
+                            _connectionState.value = BleConnectionState.ERROR
+                            if (isRunningBridge) delay(2000L)
+                            continue
+                        }
 
-                // Read stderr in a separate coroutine
-                launch(Dispatchers.IO) {
-                    try {
-                        val errReader = BufferedReader(InputStreamReader(process.errorStream, Charsets.UTF_8))
-                        var errLine: String? = null
-                        while (isActive && errReader.readLine().also { errLine = it } != null) {
-                            errLine?.let {
-                                if (it.isNotBlank()) {
-                                    DiagnosticLogger.warn(LogCategory.BLE, "BLE worker stderr: $it")
+                        command = mutableListOf(
+                            pythonCmd,
+                            scriptFile.absolutePath,
+                            "--right-only", currentConfig.rightPodOnlyNoZwift.toString()
+                        )
+                    }
+
+                    if (!currentConfig.pinnedRightPodMac.isNullOrBlank()) {
+                        if (isValidMacOrUuid(currentConfig.pinnedRightPodMac)) {
+                            command.add("--pinned-right")
+                            command.add(currentConfig.pinnedRightPodMac!!.trim())
+                        } else {
+                            DiagnosticLogger.warn(LogCategory.BLE, "Ignoring invalid pinnedRightPodMac: '${currentConfig.pinnedRightPodMac}'")
+                        }
+                    }
+                    if (!currentConfig.pinnedLeftPodMac.isNullOrBlank()) {
+                        if (isValidMacOrUuid(currentConfig.pinnedLeftPodMac)) {
+                            command.add("--pinned-left")
+                            command.add(currentConfig.pinnedLeftPodMac!!.trim())
+                        } else {
+                            DiagnosticLogger.warn(LogCategory.BLE, "Ignoring invalid pinnedLeftPodMac: '${currentConfig.pinnedLeftPodMac}'")
+                        }
+                    }
+
+                    DiagnosticLogger.info(LogCategory.BLE, "Spawning BLE worker: ${command.joinToString(" ")}")
+                    val pb = ProcessBuilder(command)
+                    pb.redirectErrorStream(false)
+                    val proc = pb.start()
+                    process = proc
+                    workerProcess = proc
+
+                    // Read stderr in a separate coroutine
+                    stderrJob = launch(Dispatchers.IO) {
+                        try {
+                            val errReader = BufferedReader(InputStreamReader(proc.errorStream, Charsets.UTF_8))
+                            var errLine: String? = null
+                            while (isActive && errReader.readLine().also { errLine = it } != null) {
+                                errLine?.let {
+                                    if (it.isNotBlank()) {
+                                        DiagnosticLogger.warn(LogCategory.BLE, "BLE worker stderr: $it")
+                                    }
                                 }
                             }
+                        } catch (_: Exception) {
                         }
-                    } catch (_: Exception) {
+                    }
+
+                    // Read stdout lines
+                    val reader = BufferedReader(InputStreamReader(proc.inputStream, Charsets.UTF_8))
+                    var line: String? = null
+                    while (isActive && reader.readLine().also { line = it } != null) {
+                        line?.let { parseWorkerLine(it.trim()) }
+                    }
+
+                    val exitCode = proc.waitFor()
+                    stderrJob.cancel()
+                    DiagnosticLogger.warn(LogCategory.BLE, "BLE worker process terminated with exitCode=$exitCode")
+
+                    if (!isRunningBridge) {
+                        if (_connectionState.value != BleConnectionState.DISCONNECTED) {
+                            _connectionState.value = BleConnectionState.DISCONNECTED
+                        }
+                        break
+                    } else {
+                        DiagnosticLogger.warn(LogCategory.BLE, "BLE worker exited unexpectedly while bridge is running; reconnecting in 2s...")
+                        _connectionState.value = BleConnectionState.SCANNING
+                        delay(2000L)
+                    }
+                } catch (e: CancellationException) {
+                    // Expected on cancel or disconnect
+                    break
+                } catch (e: Exception) {
+                    DiagnosticLogger.error(LogCategory.BLE, "Exception in BLE worker supervisor: ${e.message}")
+                    if (isRunningBridge) {
+                        _connectionState.value = BleConnectionState.SCANNING
+                        delay(2000L)
+                    } else {
+                        _connectionState.value = BleConnectionState.ERROR
+                        break
+                    }
+                } finally {
+                    stderrJob?.cancel()
+                    process?.let { p ->
+                        try {
+                            p.destroy()
+                            if (!p.waitFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                                p.destroyForcibly()
+                            }
+                        } catch (_: Exception) {
+                        }
+                    }
+                    if (workerProcess === process) {
+                        workerProcess = null
                     }
                 }
-
-                // Read stdout lines
-                val reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
-                var line: String? = null
-                while (isActive && reader.readLine().also { line = it } != null) {
-                    line?.let { parseWorkerLine(it.trim()) }
-                }
-
-                val exitCode = process.waitFor()
-                DiagnosticLogger.warn(LogCategory.BLE, "BLE worker process terminated with exitCode=$exitCode")
-                if (_connectionState.value != BleConnectionState.DISCONNECTED) {
-                    _connectionState.value = BleConnectionState.DISCONNECTED
-                }
-            } catch (e: CancellationException) {
-                // Expected on disconnect
-            } catch (e: Exception) {
-                DiagnosticLogger.error(LogCategory.BLE, "Exception in BLE worker supervisor: ${e.message}")
-                _connectionState.value = BleConnectionState.ERROR
             }
         }
     }
@@ -322,6 +380,8 @@ class DesktopZwiftBleController(
     }
 
     override fun disconnect() {
+        isRunningBridge = false
+
         tickerJob?.cancel()
         tickerJob = null
 

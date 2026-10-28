@@ -42,27 +42,28 @@ enum class ClickButton(
     val shortBadge: String,
     val badgeColorHex: Long,
     val isRightPod: Boolean,
-    val isPrimaryConfigurable: Boolean = true
+    val isPrimaryConfigurable: Boolean = true,
+    val subBadgeGlyph: String = ""
 ) {
-    Z(0x0080, "Right 'Z' (Top Orange)", "Z", 0xFFE65100, true, true),
-    A(0x0010, "Right 'A' (Bottom Blue)", "A", 0xFF1565C0, true, true),
-    Y(0x0040, "Right 'Y' (Left Yellow)", "Y", 0xFFF9A825, true, true),
-    B(0x0020, "Right 'B' (Right Green)", "B", 0xFF2E7D32, true, true),
-    SHIFT_UP_RIGHT(0x1000, "Right Top '+' Rocker", "+", 0xFF455A64, true, true),
-    SHIFT_DOWN_LEFT(0x0200, "Left Top '–' Rocker", "–", 0xFF455A64, false, true),
-    LEFT(0x0001, "Left D-Pad ◀", "◀", 0xFF37474F, false, true),
-    RIGHT(0x0004, "Left D-Pad ▶", "▶", 0xFF37474F, false, true),
-    UP(0x0002, "Left D-Pad ▲", "▲", 0xFF37474F, false, true),
-    DOWN(0x0008, "Left D-Pad ▼", "▼", 0xFF37474F, false, true),
-    // Secondary bit aliases for hardware firmware variants (routed identically to primary rockers)
-    SHIFT_UP_LEFT(0x0100, "Left Shift Up (Bit 8)", "+L", 0xFF455A64, false, false),
-    SHIFT_DOWN_LEFT_ALT(0x0400, "Left '–' Rocker (Bit 10)", "–", 0xFF455A64, false, false),
-    POWERUP_LEFT(0x0800, "Left PowerUp (Bit 11)", "P", 0xFF455A64, false, false),
-    SHIFT_UP_RIGHT_ALT(0x2000, "Right '+' Rocker (Bit 13)", "+", 0xFF455A64, true, false),
-    SHIFT_DOWN_RIGHT(0x4000, "Right Aux Shift (Bit 14)", "–R", 0xFF455A64, true, false),
-    POWERUP_RIGHT(0x8000, "Right PowerUp (Bit 15)", "P", 0xFF455A64, true, false),
-    ONOFF_LEFT(0x10000, "Left On/Off (Bit 16)", "O", 0xFF455A64, false, false),
-    ONOFF_RIGHT(0x20000, "Right On/Off (Bit 17)", "O", 0xFF455A64, true, false);
+    Y(0x0040, "Right 'Y' (Top · Cyan)", "Y", 0xFF00AEEF, true, true, "≡"),
+    Z(0x0080, "Right 'Z' (Left · Orange)", "Z", 0xFFFF6B35, true, true, "⏸"),
+    A(0x0010, "Right 'A' (Right · Green)", "A", 0xFF8CC63F, true, true, "★"),
+    B(0x0020, "Right 'B' (Bottom · Pink)", "B", 0xFFFF3385, true, true, "←"),
+    SHIFT_UP_RIGHT(0x1000, "Right Bottom '+' (Shift Up)", "+", 0xFF0F172A, true, true, "⚙+"),
+    SHIFT_DOWN_LEFT(0x0200, "Left Bottom '–' (Shift Down)", "–", 0xFF0F172A, false, true, "⚙-"),
+    UP(0x0002, "Left D-Pad ^ (Up)", "^", 0xFF0F172A, false, true, "↑"),
+    LEFT(0x0001, "Left D-Pad < (Left)", "<", 0xFF0F172A, false, true, "«"),
+    RIGHT(0x0004, "Left D-Pad > (Right)", ">", 0xFF0F172A, false, true, "»"),
+    DOWN(0x0008, "Left D-Pad v (Down)", "v", 0xFF0F172A, false, true, "↓"),
+    // Secondary bit aliases for hardware firmware variants
+    SHIFT_UP_LEFT(0x0100, "Left Shift Up (Bit 8)", "+L", 0xFF0F172A, false, false, "+"),
+    SHIFT_DOWN_LEFT_ALT(0x0400, "Left '–' Button (Bit 10)", "–", 0xFF0F172A, false, false, "-"),
+    POWERUP_LEFT(0x0800, "Left PowerUp (Bit 11)", "P", 0xFF0F172A, false, false, "P"),
+    SHIFT_UP_RIGHT_ALT(0x2000, "Right '+' Button (Bit 13)", "+", 0xFF0F172A, true, false, "+"),
+    SHIFT_DOWN_RIGHT(0x4000, "Right Aux Shift (Bit 14)", "–R", 0xFF0F172A, true, false, "-"),
+    POWERUP_RIGHT(0x8000, "Right PowerUp (Bit 15)", "P", 0xFF0F172A, true, false, "P"),
+    ONOFF_LEFT(0x10000, "Left On/Off (Bit 16)", "O", 0xFF0F172A, false, false, "O"),
+    ONOFF_RIGHT(0x20000, "Right On/Off (Bit 17)", "O", 0xFF0F172A, true, false, "O");
 
     val canonicalButton: ClickButton
         get() = when (this) {

@@ -1,5 +1,6 @@
 package com.ankiride.bridge.service
 
+import com.ankiride.bridge.anki.DesktopAnkiDispatcher
 import com.ankiride.bridge.core.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +25,9 @@ class DesktopActionRouter(
             mode = config.mode,
             button = event.button,
             pressType = event.type,
-            customBindings = config.customBindings
+            customBindings = config.customBindings,
+            rightPodOnlyNoZwift = config.rightPodOnlyNoZwift,
+            useZForShiftDownInSinglePodMode = false
         )
 
         _lastRoutedActionLabel.value = target.label
@@ -37,7 +40,11 @@ class DesktopActionRouter(
         DesktopFeedbackCueManager.triggerCue(target, config)
 
         target.ankiAction?.let { ankiAction ->
-            ankiDispatcher.dispatch(ankiAction)
+            if (ankiDispatcher is DesktopAnkiDispatcher) {
+                ankiDispatcher.dispatchAsync(ankiAction)
+            } else {
+                ankiDispatcher.dispatch(ankiAction)
+            }
         }
 
         target.myWhooshAction?.let { mwAction ->
