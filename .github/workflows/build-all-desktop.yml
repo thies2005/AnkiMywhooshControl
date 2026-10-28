@@ -1,4 +1,4 @@
-name: Build & Publish Desktop Beta Release (Ubuntu, macOS, Windows)
+name: Build & Publish Release (Android Beta + Desktop Alpha)
 
 on:
   push:
@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   build-desktop:
+    name: Build Desktop (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -186,7 +187,7 @@ jobs:
           cp First_Time_Launch_Mac.command "$DMG_STAGE/"
           ln -s /Applications "$DMG_STAGE/Applications"
 
-          DMG_OUT="release-assets/AnkiRideBridge-macos-arm64-4.0.0-beta.${{ github.run_number }}.dmg"
+          DMG_OUT="release-assets/AnkiRideBridge-macos-arm64-4.0.0-alpha.${{ github.run_number }}.dmg"
           hdiutil create -volname "AnkiRideBridge" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG_OUT"
           rm -rf "$DMG_STAGE"
 
@@ -199,7 +200,7 @@ jobs:
           ZIP_STAGE=$(mktemp -d)
           cp -R "$APP_PATH" "$ZIP_STAGE/"
           cp First_Time_Launch_Mac.command "$ZIP_STAGE/"
-          ditto -c -k --sequesterRsrc "$ZIP_STAGE" "release-assets/AnkiRideBridge-macos-arm64-4.0.0-beta.${{ github.run_number }}-app.zip"
+          ditto -c -k --sequesterRsrc "$ZIP_STAGE" "release-assets/AnkiRideBridge-macos-arm64-4.0.0-alpha.${{ github.run_number }}-app.zip"
           rm -rf "$ZIP_STAGE"
           ls -lh release-assets/
 
@@ -211,7 +212,7 @@ jobs:
           if [ -n "$APP_DIR" ]; then
             find "$APP_DIR" -type f -name "zwift_ble_worker" -exec chmod 0755 {} +
             find "$APP_DIR/bin" -type f -exec chmod 0755 {} +
-            tar -czf "release-assets/AnkiRideBridge-linux-x64-4.0.0-beta.${{ github.run_number }}-portable.tar.gz" -C "$(dirname "$APP_DIR")" "$(basename "$APP_DIR")"
+            tar -czf "release-assets/AnkiRideBridge-linux-x64-4.0.0-alpha.${{ github.run_number }}-portable.tar.gz" -C "$(dirname "$APP_DIR")" "$(basename "$APP_DIR")"
           fi
 
           DEB_FILE=$(find desktop/build/compose/binaries/main/deb build/compose/binaries/main/deb -type f -name "*.deb" 2>/dev/null | head -n 1)
@@ -222,7 +223,7 @@ jobs:
             find "$DEB_TMP" -type f -name "zwift_ble_worker" -exec chmod 0755 {} +
             dpkg-deb -b "$DEB_TMP" "$DEB_FILE"
             rm -rf "$DEB_TMP"
-            cp "$DEB_FILE" "release-assets/AnkiRideBridge-linux-amd64-4.0.0-beta.${{ github.run_number }}.deb"
+            cp "$DEB_FILE" "release-assets/AnkiRideBridge-linux-amd64-4.0.0-alpha.${{ github.run_number }}.deb"
           fi
           ls -lh release-assets/
 
@@ -232,21 +233,21 @@ jobs:
           mkdir -p release-assets
           MSI_FILE=$(find desktop/build/compose/binaries/main/msi build/compose/binaries/main/msi -type f -name "*.msi" 2>/dev/null | head -n 1)
           if [ -n "$MSI_FILE" ]; then
-            cp "$MSI_FILE" "release-assets/AnkiRideBridge-windows-x64-4.0.0-beta.${{ github.run_number }}.msi"
+            cp "$MSI_FILE" "release-assets/AnkiRideBridge-windows-x64-4.0.0-alpha.${{ github.run_number }}.msi"
           fi
 
           EXE_FILE=$(find desktop/build/compose/binaries/main/exe build/compose/binaries/main/exe -type f -name "*.exe" 2>/dev/null | head -n 1)
           if [ -n "$EXE_FILE" ]; then
-            cp "$EXE_FILE" "release-assets/AnkiRideBridge-windows-x64-4.0.0-beta.${{ github.run_number }}-setup.exe"
+            cp "$EXE_FILE" "release-assets/AnkiRideBridge-windows-x64-4.0.0-alpha.${{ github.run_number }}-setup.exe"
           fi
 
           APP_DIR=$(find desktop/build/compose/binaries/main/app build/compose/binaries/main/app -maxdepth 2 -type d -name "AnkiRideBridge" 2>/dev/null | head -n 1)
           if [ -n "$APP_DIR" ]; then
-            powershell -NoProfile -Command "Compress-Archive -Path '$APP_DIR' -DestinationPath 'release-assets/AnkiRideBridge-windows-x64-4.0.0-beta.${{ github.run_number }}-portable.zip' -Force"
+            powershell -NoProfile -Command "Compress-Archive -Path '$APP_DIR' -DestinationPath 'release-assets/AnkiRideBridge-windows-x64-4.0.0-alpha.${{ github.run_number }}-portable.zip' -Force"
           fi
           ls -lh release-assets/
 
-      - name: Upload Installer & App Bundle Artifact
+      - name: Upload Desktop Installer & App Bundle Artifact
         uses: actions/upload-artifact@v4
         with:
           name: AnkiRideBridge-${{ matrix.os }}
@@ -254,9 +255,56 @@ jobs:
             release-assets/*
           if-no-files-found: error
 
-  publish-desktop-beta-release:
-    name: Publish Desktop Beta Prerelease (Keep Android Stable as Latest)
-    needs: build-desktop
+  build-android:
+    name: Build Android Release APK (Beta)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Ensure gradlew is executable
+        run: chmod +x gradlew
+
+      - name: Run Android Unit Tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Build Android Release APK
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Prepare Android Release Assets
+        run: |
+          mkdir -p release-assets
+          RELEASE_APK=$(find app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)
+          if [ -n "$RELEASE_APK" ]; then
+            cp "$RELEASE_APK" "release-assets/AnkiRideBridge-android-4.0.0-beta.${{ github.run_number }}.apk"
+            echo "Staged Android Release APK: release-assets/AnkiRideBridge-android-4.0.0-beta.${{ github.run_number }}.apk"
+          else
+            echo "ERROR: Android release APK not found!"
+            exit 1
+          fi
+          ls -lh release-assets/
+
+      - name: Upload Android APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnkiRideBridge-android
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish Release (Android Beta + Desktop Alpha)
+    needs: [build-desktop, build-android]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -266,7 +314,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Download All Desktop Release Assets
+      - name: Download All Release Assets
         uses: actions/download-artifact@v4
         with:
           path: downloaded-assets
@@ -278,34 +326,47 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Create New GitHub Beta Prerelease for Desktop Files
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG_NAME="v4.0.0-desktop-beta.${{ github.run_number }}"
+          TAG_NAME="v4.0.0-beta.${{ github.run_number }}"
           SHORT_SHA="${GITHUB_SHA::7}"
-          TITLE="Desktop Beta #${{ github.run_number }} (Ubuntu, macOS, Windows) [${SHORT_SHA}]"
+          TITLE="Release #${{ github.run_number }} — Android (Beta) & Desktop (Alpha) [${SHORT_SHA}]"
 
-          cat << EOF > release_notes.md
-          ## AnkiRide Bridge — Desktop Beta Release (\`${TAG_NAME}\`)
+          cat << 'EOF' > release_notes.md
+          ## AnkiRide Bridge — Release
 
-          > **Release Channel Note**: **Android (\`v4.0.0\`) remains the only Stable (\`Latest\`) release.**
-          > All Desktop builds (Ubuntu Linux, macOS Apple Silicon, Windows x64) are published automatically as **Beta Pre-releases** on every push.
+          ### Release Channel Status
+          - 📱 **Android**: **Beta** (Feature-complete, fully tested with AnkiDroid & MyWhoosh)
+          - 🖥️ **Desktop (Ubuntu, macOS, Windows)**: **Alpha** (Option A Studio Split-Pane, active development)
 
-          ### Included Desktop Installers & Portable Bundles (Commit \`${SHORT_SHA}\`)
-          - **Ubuntu / Debian Linux (\`x86_64\`)**:
-            - \`AnkiRideBridge-linux-amd64-4.0.0-beta.${{ github.run_number }}.deb\` — Native Debian/Ubuntu installer (\`sudo apt install ./AnkiRideBridge-linux-amd64-4.0.0-beta.${{ github.run_number }}.deb\`)
-            - \`AnkiRideBridge-linux-x64-4.0.0-beta.${{ github.run_number }}-portable.tar.gz\` — Universal portable bundle for any Linux distribution
-          - **macOS (\`Apple Silicon arm64\`)**:
-            - \`AnkiRideBridge-macos-arm64-4.0.0-beta.${{ github.run_number }}.dmg\` — Ad-hoc signed macOS disk image with \`AnkiRideBridge.app\` and \`First_Time_Launch_Mac.command\`
-            - \`AnkiRideBridge-macos-arm64-4.0.0-beta.${{ github.run_number }}-app.zip\` — Portable macOS \`.app\` archive
-            - *macOS First-Launch Note (€0 Ad-Hoc Signed)*: After dragging \`AnkiRideBridge.app\` to \`/Applications\`, run \`xattr -cr /Applications/AnkiRideBridge.app\` in Terminal (or allow in **System Settings -> Privacy & Security -> Open Anyway**).
-          - **Windows (\`x64\`)**:
-            - \`AnkiRideBridge-windows-x64-4.0.0-beta.${{ github.run_number }}.msi\` — Windows MSI installer
-            - \`AnkiRideBridge-windows-x64-4.0.0-beta.${{ github.run_number }}-setup.exe\` — Windows Setup executable
-            - \`AnkiRideBridge-windows-x64-4.0.0-beta.${{ github.run_number }}-portable.zip\` — Portable Windows bundle
-            - *Windows SmartScreen Note*: Click **More info** -> **Run anyway** on first install.
+          ---
+
+          ### 📱 Android Downloads (Beta Channel)
+          - `AnkiRideBridge-android-4.0.0-beta.BUILD_NUMBER.apk` — Standalone Android application for phone and tablet.
+
+          ---
+
+          ### 🖥️ Desktop Downloads (Alpha Channel)
+
+          #### Ubuntu / Debian Linux (`x86_64`)
+          - `AnkiRideBridge-linux-amd64-4.0.0-alpha.BUILD_NUMBER.deb` — Native Debian/Ubuntu package (`sudo apt install ./AnkiRideBridge-linux-amd64-4.0.0-alpha.BUILD_NUMBER.deb`)
+          - `AnkiRideBridge-linux-x64-4.0.0-alpha.BUILD_NUMBER-portable.tar.gz` — Universal portable Linux archive
+
+          #### macOS (`Apple Silicon arm64`)
+          - `AnkiRideBridge-macos-arm64-4.0.0-alpha.BUILD_NUMBER.dmg` — macOS disk image containing `AnkiRideBridge.app` and `First_Time_Launch_Mac.command`
+          - `AnkiRideBridge-macos-arm64-4.0.0-alpha.BUILD_NUMBER-app.zip` — Portable macOS `.app` archive
+          > *macOS Launch Note*: After dragging to `/Applications`, run `xattr -cr /Applications/AnkiRideBridge.app` or select **Open Anyway** in **System Settings -> Privacy & Security**.
+
+          #### Windows (`x64`)
+          - `AnkiRideBridge-windows-x64-4.0.0-alpha.BUILD_NUMBER.msi` — Windows MSI installer
+          - `AnkiRideBridge-windows-x64-4.0.0-alpha.BUILD_NUMBER-setup.exe` — Windows Setup executable
+          - `AnkiRideBridge-windows-x64-4.0.0-alpha.BUILD_NUMBER-portable.zip` — Portable Windows archive
+          > *Windows SmartScreen Note*: Click **More info** -> **Run anyway** on first install.
           EOF
+
+          sed -i "s/BUILD_NUMBER/${{ github.run_number }}/g" release_notes.md
 
           gh release create "$TAG_NAME" downloaded-assets/* \
             --title "$TITLE" \
