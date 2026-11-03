@@ -1,3 +1,5 @@
+> **Historical document:** This is preserved for context and may describe obsolete behavior or commands. See the [current documentation](../README.md).
+
 # Master Implementation Specification & Parallel Subagent Orchestration Plan: AnkiRide Bridge (Kotlin Android)
 
 ## 1. Executive Mission & Orchestrator Prompt Instructions

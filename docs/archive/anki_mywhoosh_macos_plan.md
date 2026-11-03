@@ -1,3 +1,5 @@
+> **Historical document:** This is preserved for context and may describe obsolete behavior or commands. See the [current documentation](../README.md).
+
 # AnkiMyWhooshControl Desktop (`Ubuntu + macOS + Windows`) — Kotlin Compose Multiplatform & Native Implementation Plan
 
 ## 1. Executive Summary: Does Kotlin Compose Desktop Work on Ubuntu, macOS & Windows for €0?

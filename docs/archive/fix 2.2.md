@@ -1,3 +1,5 @@
+> **Historical document:** This is preserved for context and may describe obsolete behavior or commands. See the [current documentation](../README.md).
+
 # Multi-Agent Phase Plan & Review-Gated Specification: `AnkiMywhooshControl` v2.1 (Log-Verified Hardware & MyWhoosh Fix)
 
 ## 1. Executive Post-Mortem of Your Tablet Log (`68 Entries`) & Exact Fixes

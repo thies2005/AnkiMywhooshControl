@@ -1,3 +1,5 @@
+> **Historical document:** This is preserved for context and may describe obsolete behavior or commands. See the [current documentation](../README.md).
+
 # Master Multi-Agent Implementation Plan & Review-Gated Specification: `AnkiMywhooshControl` v4.0
 
 ## 1. Executive Summary & Feature Scope in v4.0

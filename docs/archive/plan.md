@@ -1,3 +1,5 @@
+> **Historical document:** This is preserved for context and may describe obsolete behavior or commands. See the [current documentation](../README.md).
+
 # Standalone Architecture & Master Remediation Specification for `thies2005/AnkiMywhooshControl`
 
 ## 1. Executive Architecture: 100% Standalone (No Zwift App, No BikeControl App, Zero Quirks)
@@ -549,7 +551,9 @@ class ZwiftBleController(
 
 ### 6.1 `anki/AnkiAccessibilityBridge.kt`
 
-Implements **3-Layer Button Resolution** (View ID $ightarrow$ Bottom-Bar Text/ContentDescription $ightarrow$ Window-Relative Geometric Bottom-Bar Tap) plus a **350ms Post-Flip Bounce Guard** (`FLIP_TO_GRADE_GUARD_MS = 350L`) so you never accidentally grade a card on a double-bounce:
+Implements **3-Layer Button Resolution** (View ID $
+ightarrow$ Bottom-Bar Text/ContentDescription $
+ightarrow$ Window-Relative Geometric Bottom-Bar Tap) plus a **350ms Post-Flip Bounce Guard** (`FLIP_TO_GRADE_GUARD_MS = 350L`) so you never accidentally grade a card on a double-bounce:
 
 ```kotlin
 package com.ankiride.bridge.anki

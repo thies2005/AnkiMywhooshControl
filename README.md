@@ -1,57 +1,22 @@
-# AnkiRide Bridge (`com.ankiride.bridge`)
+# ClickControl
 
-A 100% standalone Android application (Kotlin, Jetpack Compose, Min SDK 29 / Target SDK 35) that connects a **Zwift Click v2** (10-button dual-pod BLE handlebar controller) and dynamically routes inputs to:
+ClickControl routes Zwift Click controller buttons to Anki and MyWhoosh. It has an Android app and a desktop app. Android requires Android 10 (API 29) or later; desktop packages are configured for Linux, macOS and Windows. Local validation described in [AUDIT.md](AUDIT.md) covers Linux and an Android emulator; real controllers and target apps still need testing.
 
-1. **AnkiDroid** — Automated card review clicking via an Android `AccessibilityService` (`ACTION_CLICK`) without requiring input focus, using a 3-layer clicking engine (View IDs -> Bottom-bar labels -> Geometric column tap) with a 350ms post-flip bounce guard.
-2. **MyWhoosh** — Native virtual shifting and steering via a built-in **`_openbikecontrol._tcp` binary server & mDNS advertiser** (TCP port 21587 over `127.0.0.1` or Wi-Fi LAN), completely replacing third-party apps like BikeControl or Zwift, plus an automatic accessibility touch fallback for **MyWhoosh MyShift**.
+## Quick start
 
----
+1. Install a package from the [GitHub releases](https://github.com/thies2005/AnkiMywhooshControl/releases), or [build from source](docs/DEVELOPMENT.md). Enable Bluetooth and wake the controllers.
+2. For a laptop running Anki, install and enable AnkiConnect. On the same laptop, use `127.0.0.1:8765` in ClickControl. For Android connecting to laptop Anki, select **Laptop Anki** in the preset, enter the laptop's private LAN IPv4 address and port, and configure AnkiConnect and the firewall to accept that trusted LAN connection. AnkiConnect's default loopback binding is local only.
+3. In **Settings**, choose **Right controller only** on the device running ClickControl. Connect the left controller to the cycling app separately. An unidentified controller is not assumed to be right: pin its verified Bluetooth address if necessary. A controller should have only one Bluetooth owner.
+4. In **Presets**, select a mapping, then use **Control** to connect. Standard right-side presses flip or grade cards (Y Again, Z Hard, A/B Good; holds include Undo and Easy). The first grading press reveals the answer; a subsequent press grades it.
 
-## Zero-Quirk Architecture Highlights
+To route both controllers through ClickControl, choose **Both controllers** in Settings and use a preset with right-side Anki and left-side bike actions. Standard bindings provide shifting, steering, camera and emote actions. MyWhoosh must connect to the advertised OpenBikeControl service for network control; platform-specific fallback options are described in [setup](docs/SETUP.md).
 
-- **Default 1-Pod Mode (Right Pod Only)**: Uses the Right Pod (`A`, `B`, `Y`, `Z` + top `+` rocker) which has no 24-hour sleep lock and never requires the Zwift app. Instant mechanical shifting (**Top `+` Rocker = Shift Up**, **Top `Z` Button = Shift Down**) and 100% card review coverage (**`Y` = Again**, **`B` = Hard**, **`A` = Good**, **Long-Press `A` = Easy**, **Long-Press `Y` = Undo**).
-- **Optional 2-Pod Full Mode**: Enable the Left Pod (`–` Rocker + D-Pad) with automatic 55-second watchdog auto-reconnect.
-- **Built-In OpenBikeControl Server**: Advertises `_openbikecontrol._tcp` on port 21587. When MyWhoosh opens on the tablet or a phone over Wi-Fi, it auto-discovers this app and connects directly.
-- **3-Layer AnkiDroid Clicking + 350ms Bounce Guard**: Automatically flips cards, grades them, and prevents accidental double-tap grading on bumpy sprints.
+**Presets** contains named mappings for press and hold actions. Create a blank or standard preset, duplicate, rename, edit, save, reset or delete it. Save a draft before switching, or explicitly discard it. Existing per-mode mappings migrate into editable Imported presets. Controller ownership is a separate Settings choice and changing a binding does not change which pod is connected. Android presets also choose AnkiDroid or laptop Anki as their Anki destination.
 
----
+For installation and connection details see [Setup](docs/SETUP.md); for builds, tests and architecture see [Development](docs/DEVELOPMENT.md); for common problems see [Troubleshooting](docs/TROUBLESHOOTING.md). The [documentation index](docs/README.md) links to design and audit notes.
 
-## Operating Modes
+## Interface
 
-| Mode | Role / Routing |
-| :--- | :--- |
-| **Mode 1: Tablet Split-Screen** | Runs MyWhoosh + AnkiDroid side-by-side. MyWhoosh connects to `127.0.0.1:21587`; AnkiDroid buttons clicked via AccessibilityService. |
-| **Mode 2: Tablet AnkiDroid + Phone MyWhoosh** | Runs AnkiDroid full-screen on Tablet; MyWhoosh on phone. Phone discovers the Tablet over Wi-Fi LAN via mDNS (`_openbikecontrol._tcp`). |
-| **Mode 3: Anki-Only (Study)** | Disables MyWhoosh output; maps all buttons to AnkiDroid review, hints, and navigation. |
-| **Mode 4: MyWhoosh-Only (Ride)** | Disables AnkiDroid clicking; maps buttons to MyWhoosh shifting, steering, camera, powerup, and emotes. |
-
----
-
-## Button Mapping Proposal
-
-| Button | Gesture | 1-Pod Default (`rightPodOnlyNoZwift = true`) | 2-Pod Full Mode (`rightPodOnlyNoZwift = false`) | Mode 3 (Anki-Only) | Mode 4 (MyWhoosh-Only) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Right `+` Rocker** | Single Click | **Shift Up (`0x01`)** | **Shift Up (`0x01`)** | Flip / Good (`3`) | Shift Up (`0x01`) |
-| **Right `+` Rocker** | Long Press (450ms) | **Shift Down (`0x02`)** | Shift Up (+2) | Undo | Shift Down (`0x02`) |
-| **Right `Z` (Top)** | Single Click | **Shift Down (`0x02`)** | **Flip / Easy (`4`)** | Flip / Easy (`4`) | Shift Down (`0x02`) |
-| **Right `Z` (Top)** | Long Press (450ms) | **Undo** | **Undo** | Undo | Screenshot (`0x24`) |
-| **Right `A` (Bottom)** | Single Click | **Flip / Good (`3`)** | **Flip / Good (`3`)** | Flip / Good (`3`) | UI Confirm (`0x14`) |
-| **Right `A` (Bottom)** | Long Press (450ms) | **Flip / Easy (`4`)** | **Flip / Easy (`4`)** | Flip / Easy (`4`) | Power-up (`0x50`) |
-| **Right `B` (Right)** | Single Click | **Flip / Hard (`2`)** | **Flip / Hard (`2`)** | Flip / Hard (`2`) | UI Back (`0x15`) |
-| **Right `Y` (Left)** | Single Click | **Flip / Again (`1`)** | **Flip / Again (`1`)** | Flip / Again (`1`) | HUD Toggle (`0x44`) |
-| **Right `Y` (Left)** | Long Press (450ms) | **Undo** | **Undo** | Undo | Emote (`0x20`) |
-| **Left `–` Rocker** | Single Click | *(Ignored)* | **Shift Down (`0x02`)** | Undo | Shift Down (`0x02`) |
-| **Left D-Pad `◀` / `▶`** | Single / Hold | *(Ignored)* | **Steer Left / Right (`0x18`/`0x19`)** | Flip Card | Steer Left / Right |
-| **Left D-Pad `▲` / `▼`** | Single Click | *(Ignored)* | **Camera (`0x40`) / Emote (`0x20`)** | Undo | Camera / Emote |
-
----
-
-## Build & Verification
-
-```bash
-# Run security gates and unit test suite
-./verify.sh
-
-# Build debug APK
-./gradlew assembleDebug
-```
+| Desktop Control | Android preset editor |
+| --- | --- |
+| <img src="docs/images/desktop-control.png" alt="ClickControl desktop Control screen" width="640"> | <img src="docs/images/android-presets.png" alt="ClickControl Android preset editor" width="250"> |

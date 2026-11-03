@@ -1,3 +1,5 @@
+> **Historical document:** This is preserved for context and may describe obsolete behavior or commands. See the [current documentation](../README.md).
+
 # Multi-Agent Phase Plan & Review-Gated Specification: `AnkiMywhooshControl` v2.3 (Right-Pod 4-Color Split: 2 Shift + 2 Simple Anki & Per-Mode Custom Button UI)
 
 ## 1. Executive Summary of Changes in v2.3

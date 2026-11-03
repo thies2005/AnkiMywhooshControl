@@ -1,3 +1,5 @@
+> **Historical document:** This is preserved for context and may describe obsolete behavior or commands. See the [current documentation](../README.md).
+
 # Multi-Agent Phase Plan & Review-Gated Specification: `AnkiMywhooshControl` v2.0
 
 ## 1. Executive Summary & Root-Cause Fixes Included in This Plan
