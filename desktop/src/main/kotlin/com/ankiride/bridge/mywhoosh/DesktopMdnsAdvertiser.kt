@@ -14,18 +14,18 @@ open class DesktopMdnsAdvertiser {
     open fun registerOpenBikeService(port: Int = 21587) {
         try {
             val lanAddress = findPrimaryLanIpv4() ?: InetAddress.getLocalHost()
-            val mdns = JmDNS.create(lanAddress, "AnkiRideDesktop")
+            val mdns = JmDNS.create(lanAddress, "ClickControlDesktop")
             val props = mapOf(
                 "version" to "1",
                 "id" to "ankiridedesktop01",
-                "name" to "AnkiRide Bridge",
+                "name" to "ClickControl",
                 "service-uuids" to "d273f680-d548-419d-b9d1-fa0472345229",
-                "manufacturer" to "AnkiRide",
+                "manufacturer" to "ClickControl",
                 "model" to "Zwift Click v2 Desktop Bridge"
             )
             val serviceInfo = ServiceInfo.create(
                 "_openbikecontrol._tcp.local.",
-                "AnkiRideBridge",
+                "ClickControl",
                 port,
                 0,
                 0,

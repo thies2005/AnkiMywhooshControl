@@ -42,11 +42,16 @@ def emit_packet(mac: str, hex_bytes: str):
     print(f"PACKET {mac} {hex_bytes}", flush=True)
 
 
+if "--protocol-version" in sys.argv:
+    print("CLICKCONTROL_BLE_PROTOCOL_3", flush=True)
+    sys.exit(0)
+
 if "--help" in sys.argv or "-h" in sys.argv:
     parser = argparse.ArgumentParser(description="Zwift Click v2 BLE Worker")
     parser.add_argument("--pinned-right", default="", help="Pinned MAC address for Right Pod")
     parser.add_argument("--pinned-left", default="", help="Pinned MAC address for Left Pod")
     parser.add_argument("--right-only", default="true", help="Connect only to single/right pod (true/false)")
+    parser.add_argument("--legacy-shared", default="false", help="Allow legacy shared controllers (true/false)")
     parser.add_argument("--scan-test", action="store_true", help="Run in scan-test mode (scan, connect, stream for duration, exit 0)")
     parser.add_argument("--duration", type=int, default=15, help="Duration for scan-test mode in seconds (default 15)")
     parser.parse_args()
@@ -151,13 +156,19 @@ async def setup_and_handshake(client: BleakClient, mac: str) -> bool:
         hex_str = data.hex().upper()
         emit_packet(mac, hex_str)
 
+    # A successful connection must actually provide input and accept the handshake.
+    if not measurement_char or not control_point_char:
+        log("ERROR", f"Required Zwift characteristics missing on {mac}")
+        return False
+
     # Subscribe to measurement_char
     if measurement_char:
         try:
             await client.start_notify(measurement_char, notification_handler)
             log("INFO", f"Subscribed to measurement notifications ({measurement_char.uuid}) on {mac}")
         except Exception as ne:
-            log("WARN", f"Failed to subscribe to measurement char on {mac}: {ne}")
+            log("ERROR", f"Failed to subscribe to measurement char on {mac}: {ne}")
+            return False
     else:
         log("WARN", f"Measurement characteristic not found on {mac}")
 
@@ -197,33 +208,42 @@ async def setup_and_handshake(client: BleakClient, mac: str) -> bool:
 
 
 class ZwiftBleWorker:
-    def __init__(self, pinned_right: str = "", pinned_left: str = "", right_only: bool = True):
+    def __init__(self, pinned_right: str = "", pinned_left: str = "", right_only: bool = True, legacy_shared: bool = False):
         self.pinned_right = pinned_right.strip().upper() if pinned_right else ""
         self.pinned_left = pinned_left.strip().upper() if pinned_left else ""
         self.right_only = right_only
+        self.legacy_shared = legacy_shared
+        self.reported_unknown = set()
         self.running = True
         self.active_clients = {}  # mac -> BleakClient
         self.connected_macs = set()
+        self.connected_sides = {}
 
-    def is_mac_allowed(self, mac: str) -> bool:
-        mac_upper = mac.upper()
-        if self.pinned_right and self.pinned_left:
-            return mac_upper == self.pinned_right or mac_upper == self.pinned_left
-        if self.pinned_right:
-            return mac_upper == self.pinned_right
-        if self.pinned_left:
-            return mac_upper == self.pinned_left
-        return True
+    def side_for(self, mac, adv_data):
+        mac = mac.upper()
+        if self.legacy_shared:
+            pins = {p for p in (self.pinned_right, self.pinned_left) if p}
+            if pins and mac not in pins:
+                return None
+            if self.right_only and is_left_pod(adv_data):
+                return None
+            return "RIGHT" if "RIGHT" not in self.connected_sides.values() else "LEFT"
+        if mac == self.pinned_right and mac == self.pinned_left:
+            return None
+        if mac == self.pinned_right:
+            return "RIGHT"
+        if mac == self.pinned_left:
+            return "LEFT"
+        data = (adv_data.manufacturer_data or {}).get(ZWIFT_MANUFACTURER_ID, b"")
+        if data and data[0] == DEVICE_ID_LEFT_POD:
+            return "LEFT" if not self.pinned_left else None
+        if data and data[0] == DEVICE_ID_RIGHT_POD:
+            return "RIGHT" if not self.pinned_right else None
+        return None
 
     def update_connection_state(self, changed_mac: str = ""):
-        count = len(self.connected_macs)
-        if count >= 2:
-            emit_state("CONNECTED_BOTH_PODS", changed_mac)
-        elif count == 1:
-            first_mac = next(iter(self.connected_macs))
-            emit_state("CONNECTED_RIGHT_ONLY", first_mac)
-        else:
-            emit_state("DISCONNECTED", changed_mac)
+        # Side-tagged events preserve identity even when the left pod connects first.
+        pass
 
     async def run(self):
         log("INFO", f"Starting Zwift BLE Worker (right_only={self.right_only}, pinned_right='{self.pinned_right}', pinned_left='{self.pinned_left}')")
@@ -249,18 +269,21 @@ class ZwiftBleWorker:
 
                 def detection_callback(device, adv_data):
                     nonlocal found_device, found_adv
-                    if not self.running:
+                    if not self.running or found_event.is_set():
                         return
                     mac_upper = device.address.upper()
                     if mac_upper in self.connected_macs or mac_upper in self.active_clients:
                         return
-                    if not self.is_mac_allowed(mac_upper):
-                        return
                     if not is_zwift_device(device, adv_data):
                         return
 
-                    left = is_left_pod(adv_data)
-                    if self.right_only and left:
+                    side = self.side_for(mac_upper, adv_data)
+                    if side is None or side in self.connected_sides.values():
+                        if side is None and not self.legacy_shared and mac_upper not in self.reported_unknown:
+                            self.reported_unknown.add(mac_upper)
+                            log("INFO", f"Unassigned Zwift device {mac_upper}; pin its address to a side in Hardware settings if needed")
+                        return
+                    if self.right_only and side == "LEFT":
                         log("INFO", f"Skipping left pod {mac_upper} because right_only=true")
                         return
 
@@ -287,8 +310,8 @@ class ZwiftBleWorker:
 
                 if found_device is not None and self.running:
                     mac_upper = found_device.address.upper()
-                    is_left = is_left_pod(found_adv)
-                    await self.connect_device(found_device, mac_upper, is_left)
+                    side = self.side_for(mac_upper, found_adv)
+                    await self.connect_device(found_device, mac_upper, side)
 
                 await asyncio.sleep(0.5)
 
@@ -300,16 +323,17 @@ class ZwiftBleWorker:
                 log("ERROR", f"Unexpected scan exception: {e}")
                 await asyncio.sleep(3.0)
 
-    async def connect_device(self, device, mac: str, is_left: bool):
+    async def connect_device(self, device, mac: str, side: str):
         if mac in self.connected_macs or mac in self.active_clients:
             return
 
-        log("INFO", f"Connecting GATT to {mac} (is_left={is_left})...")
+        log("INFO", f"Connecting GATT to {mac} (side={side})...")
         emit_state("CONNECTING", mac)
 
         def on_disconnect(client):
             log("WARN", f"Device disconnected: {mac}")
             self.connected_macs.discard(mac)
+            self.connected_sides.pop(mac, None)
             self.active_clients.pop(mac, None)
             emit_state("DISCONNECTED", mac)
             self.update_connection_state(mac)
@@ -337,6 +361,8 @@ class ZwiftBleWorker:
                 return
 
             self.connected_macs.add(mac)
+            self.connected_sides[mac] = side
+            emit_state("CONNECTED_" + side, mac)
             log("INFO", f"Handshake complete & subscribed to notifications on {mac}")
             self.update_connection_state(mac)
 
@@ -463,6 +489,7 @@ def main():
     parser.add_argument("--pinned-right", default="", help="Pinned MAC address for Right Pod")
     parser.add_argument("--pinned-left", default="", help="Pinned MAC address for Left Pod")
     parser.add_argument("--right-only", default="true", help="Connect only to single/right pod (true/false)")
+    parser.add_argument("--legacy-shared", default="false", help="Allow legacy shared controllers (true/false)")
     parser.add_argument("--scan-test", action="store_true", help="Run in scan-test mode (scan, connect, stream for duration, exit 0)")
     parser.add_argument("--duration", type=int, default=15, help="Duration for scan-test mode in seconds (default 15)")
     args = parser.parse_args()
@@ -472,7 +499,8 @@ def main():
     worker = ZwiftBleWorker(
         pinned_right=args.pinned_right,
         pinned_left=args.pinned_left,
-        right_only=right_only_bool
+        right_only=right_only_bool,
+        legacy_shared=args.legacy_shared.strip().lower() in ("true", "1", "yes")
     )
 
     loop = asyncio.new_event_loop()

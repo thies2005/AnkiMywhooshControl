@@ -69,4 +69,17 @@ class ZwiftGestureEngineTest {
         assertEquals(ClickButton.B, events[1].button)
         assertEquals(PressType.LONG_PRESS, events[1].type)
     }
+    @Test
+    fun longReleaseWithoutIntermediateNotificationAndReset() {
+        val events = mutableListOf<ButtonGestureEvent>()
+        val engine = ZwiftGestureEngine { events.add(it) }
+        engine.processButtonStates(mapOf(ClickButton.A to true), 1000L)
+        engine.processButtonStates(mapOf(ClickButton.A to false), 1500L)
+        assertEquals(PressType.LONG_PRESS, events.single().type)
+        engine.processButtonStates(mapOf(ClickButton.B to true), 2000L)
+        engine.reset()
+        engine.processButtonStates(mapOf(ClickButton.B to false), 2100L)
+        assertEquals(1, events.size)
+    }
+
 }

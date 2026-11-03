@@ -125,7 +125,7 @@ class BridgeForegroundService : Service() {
         )
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("AnkiRide Bridge Active")
+            .setContentTitle("ClickControl Active")
             .setContentText("OpenBikeControl server + Zwift Click controller running")
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentIntent(pendingIntent)
@@ -195,6 +195,7 @@ class BridgeForegroundService : Service() {
         bleController = null
         openBikeServer = null
         myWhooshDispatcher = null
+        ankiDispatcher?.ioExecutor?.shutdownNow()
         ankiDispatcher = null
         actionRouter = null
 
@@ -215,10 +216,10 @@ class BridgeForegroundService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "AnkiRide Bridge Service",
+                "ClickControl Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Keeps AnkiRide OpenBikeControl server and BLE routing alive in background"
+                description = "Keeps ClickControl OpenBikeControl server and BLE routing alive in background"
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)

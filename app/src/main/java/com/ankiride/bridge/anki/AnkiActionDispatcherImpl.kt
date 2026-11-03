@@ -5,7 +5,9 @@ import com.ankiride.bridge.core.AnkiAction
 import com.ankiride.bridge.core.AnkiActionDispatcher
 import com.ankiride.bridge.core.AppConfiguration
 import com.ankiride.bridge.core.OperatingMode
-import java.util.concurrent.ArrayBlockingQueue
+import com.ankiride.bridge.core.PresetStore
+import com.ankiride.bridge.core.AnkiTarget
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
@@ -21,13 +23,12 @@ class AnkiActionDispatcherImpl(
         1,
         0L,
         TimeUnit.MILLISECONDS,
-        ArrayBlockingQueue(1),
-        ThreadPoolExecutor.DiscardOldestPolicy()
+        LinkedBlockingQueue()
     )
 
     override fun dispatch(action: AnkiAction): Boolean {
         val config = configSupplier()
-        if (config.mode == OperatingMode.MODE_5_UBUNTU_ANKICONNECT) {
+        if ((PresetStore.active(config)?.ankiTarget ?: if (config.mode == OperatingMode.MODE_5_UBUNTU_ANKICONNECT) AnkiTarget.ANKICONNECT else AnkiTarget.ANKIDROID) == AnkiTarget.ANKICONNECT) {
             ioExecutor.execute {
                 ankiConnectClient.dispatchAnkiConnectAction(
                     host = config.ubuntuAnkiConnectHost,

@@ -292,4 +292,14 @@ class DesktopButtonMappingStoreTest {
             tempFile.delete()
         }
     }
+    @Test
+    fun legacyFilesKeepLegacyAssignmentAndNewSettingsPersistPreset() {
+        val file = File.createTempFile("legacy-settings", ".properties")
+        try {
+            file.writeText("operating_mode=MODE_3_ANKI_ONLY\n")
+            assertEquals(PodAssignment.LEGACY_SHARED, ButtonMappingStore.loadConfiguration(file).podAssignment)
+            ButtonMappingStore.saveConfiguration(AppConfiguration(podAssignment = PodAssignment.RIGHT_ANKI_LEFT_BIKE), file)
+            assertEquals(PodAssignment.RIGHT_ANKI_LEFT_BIKE, ButtonMappingStore.loadConfiguration(file).podAssignment)
+        } finally { file.delete() }
+    }
 }

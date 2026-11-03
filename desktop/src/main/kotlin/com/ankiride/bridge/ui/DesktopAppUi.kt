@@ -41,7 +41,7 @@ private enum class StudioInspectorTab(val title: String) {
 }
 
 /**
- * Option A — Studio Split-Pane Desktop UI for AnkiRide Bridge.
+ * Option A — Studio Split-Pane Desktop UI for ClickControl.
  * Features:
  * - Persistent Top Telemetry & Lifecycle Bar
  * - 5-Mode Selector Strip
@@ -62,171 +62,87 @@ fun DesktopAppUi(
     onTestAnkiAction: (AnkiAction) -> Unit,
     onTestMyWhooshAction: (MyWhooshAction) -> Unit,
     lastRoutedActionLabel: String = "Ready",
-    onMinimizeToTray: () -> Unit = {}
+    onMinimizeToTray: () -> Unit = {},
+    onPresetDirtyChange: (Boolean) -> Unit = {}
 ) {
-    var selectedButton by remember { mutableStateOf(ClickButton.Y) }
-    var holdSimulationMode by remember { mutableStateOf(false) }
-    var activeRightTab by remember { mutableStateOf(StudioInspectorTab.KEYMAP) }
-    val logs by DiagnosticLogger.logs.collectAsState()
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF0B0F19))
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // 1. Persistent Top Telemetry & Connection Header Bar
-        TopTelemetryHeaderBar(
-            config = config,
-            onConfigChange = onConfigChange,
-            isBridgeRunning = isBridgeRunning,
-            onToggleBridge = onToggleBridge,
-            bleState = bleState,
-            connectedRightMac = connectedRightMac,
-            connectedLeftMac = connectedLeftMac,
-            hasMyWhooshClient = hasMyWhooshClient,
-            lastRoutedActionLabel = lastRoutedActionLabel,
-            onMinimizeToTray = onMinimizeToTray
-        )
-
-        // 2. 5-Mode Operating Selector Strip
-        OperatingModePillStrip(
-            selectedMode = config.mode,
-            onSelectMode = { newMode ->
-                onConfigChange(config.copy(mode = newMode))
+    var page by remember { mutableStateOf(0) }
+    var presetDirty by remember { mutableStateOf(false) }
+    LaunchedEffect(presetDirty) { onPresetDirtyChange(presetDirty) }
+    var pendingPage by remember { mutableStateOf<Int?>(null) }
+    fun navigate(next: Int) { if (page == 1 && next != 1 && presetDirty) pendingPage = next else page = next }
+    var advanced by remember { mutableStateOf(false) }
+    var portText by remember { mutableStateOf(config.ubuntuAnkiConnectPort.toString()) }
+    var showMappings by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column {
+                Text("ClickControl", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+                Text("Controller bridge for Anki and MyWhoosh", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-        )
-
-        // 3. Main Studio Split-Pane Workspace (Left: Physical Click v2 Pods | Right: Tabbed Inspector)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            // LEFT PANE: Physical Zwift Click v2 Dual-Pod Visualizer & Simulator
-            Card(
-                modifier = Modifier
-                    .weight(0.49f)
-                    .fillMaxHeight(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
-                border = BorderStroke(1.dp, Color(0xFF1F2937))
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    ZwiftClickV2PhysicalPodsVisualizer(
-                        config = config,
-                        isBridgeRunning = isBridgeRunning,
-                        selectedButton = selectedButton,
-                        holdSimulationMode = holdSimulationMode,
-                        onSelectButton = { selectedButton = it },
-                        onToggleHoldMode = { holdSimulationMode = it },
-                        onTogglePodMode = {
-                            onConfigChange(config.copy(rightPodOnlyNoZwift = !config.rightPodOnlyNoZwift))
-                        },
-                        onSimulateGesture = onSimulateGesture,
-                        onApplyPresetBindings = { updatedBindings, useZShift ->
-                            onConfigChange(
-                                config.copy(
-                                    customBindings = updatedBindings,
-                                    useZForShiftDownInSinglePodMode = useZShift
-                                )
-                            )
-                        }
-                    )
-                }
+            Button(onClick = onToggleBridge, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (isBridgeRunning) "Stop bridge" else "Start bridge") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("Control", "Presets", "Settings").forEachIndexed { index, label ->
+                FilterChip(selected = page == index, onClick = { navigate(index) }, label = { Text(label) }, modifier = Modifier.heightIn(min = 48.dp))
             }
-
-            // RIGHT PANE: Multi-Tab Studio Inspector (Keymap, Network & Tests, Hardware, Live Logs)
-            Card(
-                modifier = Modifier
-                    .weight(0.51f)
-                    .fillMaxHeight(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
-                border = BorderStroke(1.dp, Color(0xFF1F2937))
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Right Pane Segmented Tab Bar
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        StudioInspectorTab.entries.forEach { tab ->
-                            val isSelected = activeRightTab == tab
-                            val labelText = if (tab == StudioInspectorTab.LOGS) {
-                                "Live Logs (${logs.size})"
-                            } else {
-                                tab.title
-                            }
-                            Button(
-                                onClick = { activeRightTab = tab },
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isSelected) Color(0xFF0EA5E9) else Color(0xFF1E293B),
-                                    contentColor = if (isSelected) Color(0xFF082F49) else Color(0xFFE2E8F0)
-                                ),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                            ) {
-                                Text(
-                                    text = labelText,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+            val wide = maxWidth >= 900.dp
+            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                if (wide) {
+                    Card(Modifier.width(250.dp).fillMaxHeight()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("Status", style = MaterialTheme.typography.titleLarge)
+                            Text(if (isBridgeRunning) "Bridge running" else "Bridge stopped")
+                            Text("Controller: ${bleState.name.replace('_', ' ').lowercase()}")
+                            Text("Right: ${connectedRightMac ?: "not connected"}")
+                            Text("Left: ${connectedLeftMac ?: "not connected"}")
+                            Text(if (hasMyWhooshClient) "MyWhoosh connected" else "Waiting for MyWhoosh")
+                            HorizontalDivider()
+                            Text("Active preset", style = MaterialTheme.typography.titleMedium)
+                            Text(PresetStore.active(config)?.name ?: "Default")
+                            Text("Last action: $lastRoutedActionLabel", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-
-                    HorizontalDivider(color = Color(0xFF1F2937))
-
-                    // Active Tab Body
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        when (activeRightTab) {
-                            StudioInspectorTab.KEYMAP -> {
-                                StudioKeymapInspectorTab(
-                                    config = config,
-                                    selectedButton = selectedButton,
-                                    onSelectButton = { selectedButton = it },
-                                    onSimulateGesture = onSimulateGesture,
-                                    onUpdateBindings = { updated ->
-                                        onConfigChange(config.copy(customBindings = updated))
-                                    }
-                                )
+                }
+                Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    when (page) {
+                        0 -> {
+                            Text("Control", style = MaterialTheme.typography.headlineSmall)
+                            if (!wide) Text("${if (isBridgeRunning) "Running" else "Stopped"} · ${bleState.name.replace('_', ' ').lowercase()} · ${PresetStore.active(config)?.name ?: "Default"}")
+                            Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Active preset", style = MaterialTheme.typography.titleMedium)
+                                Text(PresetStore.active(config)?.name ?: "Default")
+                                Text("Last action: $lastRoutedActionLabel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                OutlinedButton(onClick = { navigate(1) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Edit preset") }
+                            } }
+                            OutlinedButton(onClick = { showMappings = !showMappings }, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (showMappings) "Hide mappings" else "View mappings") }
+                            if (showMappings) MappingOverview(config)
+                            Text("Test an action", style = MaterialTheme.typography.titleMedium)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { onTestAnkiAction(AnkiAction.FLIP_CARD) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Test Anki") }
+                                OutlinedButton(onClick = { onTestMyWhooshAction(MyWhooshAction.SHIFT_UP) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Test bike") }
                             }
-                            StudioInspectorTab.NETWORK -> {
-                                StudioNetworkAndTestsTab(
-                                    config = config,
-                                    onConfigChange = onConfigChange,
-                                    hasMyWhooshClient = hasMyWhooshClient,
-                                    onTestAnkiAction = onTestAnkiAction,
-                                    onTestMyWhooshAction = onTestMyWhooshAction
-                                )
+                        }
+                        1 -> PresetEditor(config, onConfigChange, allowAnkiDroid = false, onDirtyChanged = { presetDirty = it })
+                        else -> {
+                            Text("Settings", style = MaterialTheme.typography.headlineSmall)
+                            Text("Controller connection", style = MaterialTheme.typography.titleMedium)
+                            listOf(false to "Right controller only", true to "Both controllers").forEach { (both, label) ->
+                                val selected = if (both) (config.podAssignment == PodAssignment.RIGHT_ANKI_LEFT_BIKE || config.podAssignment == PodAssignment.LEGACY_SHARED && !config.rightPodOnlyNoZwift) else (config.podAssignment == PodAssignment.RIGHT_ANKI_ONLY || config.podAssignment == PodAssignment.LEGACY_SHARED && config.rightPodOnlyNoZwift)
+                                Row(Modifier.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = selected, onClick = { if (!selected) onConfigChange(config.copy(podAssignment = if (both) PodAssignment.RIGHT_ANKI_LEFT_BIKE else PodAssignment.RIGHT_ANKI_ONLY, rightPodOnlyNoZwift = !both)) }); Text(label)
+                                }
                             }
-                            StudioInspectorTab.HARDWARE -> {
-                                StudioHardwareAndAutostartTab(
-                                    config = config,
-                                    connectedRightMac = connectedRightMac,
-                                    connectedLeftMac = connectedLeftMac,
-                                    onConfigChange = onConfigChange
-                                )
-                            }
-                            StudioInspectorTab.LOGS -> {
+                            OutlinedTextField(config.ubuntuAnkiConnectHost, { onConfigChange(config.copy(ubuntuAnkiConnectHost = it)) }, label = { Text("AnkiConnect host") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(portText, { portText = it.filter(Char::isDigit); portText.toIntOrNull()?.takeIf { port -> port in 1..65535 }?.let { port -> onConfigChange(config.copy(ubuntuAnkiConnectPort = port)) } }, label = { Text("AnkiConnect port") }, isError = portText.toIntOrNull() !in 1..65535, supportingText = { if (portText.toIntOrNull() !in 1..65535) Text("Enter a port from 1 to 65535") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedButton(onClick = { advanced = !advanced }, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (advanced) "Hide advanced settings" else "Advanced settings") }
+                            if (advanced) {
+                                StudioHardwareAndAutostartTab(config, connectedRightMac, connectedLeftMac, onConfigChange)
+                                DesktopOptionsCard(config = config, onConfigChange = onConfigChange)
+                                NetworkingTestCard(config = config, onConfigChange = onConfigChange, hasMyWhooshClient = hasMyWhooshClient, onTestAnkiAction = onTestAnkiAction, onTestMyWhooshAction = onTestMyWhooshAction)
                                 StudioDiagnosticLogsTab()
+                                OutlinedButton(onClick = onMinimizeToTray) { Text("Minimize to tray") }
                             }
                         }
                     }
@@ -234,11 +150,10 @@ fun DesktopAppUi(
             }
         }
     }
+    if (pendingPage != null) AlertDialog(onDismissRequest = { pendingPage = null }, title = { Text("Discard unsaved changes?") }, text = { Text("Save your preset before leaving, or discard the changes.") }, confirmButton = { TextButton(onClick = { page = pendingPage ?: page; presetDirty = false; pendingPage = null }) { Text("Discard") } }, dismissButton = { TextButton(onClick = { pendingPage = null }) { Text("Keep editing") } })
+
 }
 
-// ===========================================================================
-// 1. PERSISTENT TOP TELEMETRY & LIFECYCLE HEADER BAR
-// ===========================================================================
 
 @Composable
 private fun TopTelemetryHeaderBar(
@@ -299,7 +214,7 @@ private fun TopTelemetryHeaderBar(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = "AnkiRide Bridge",
+                            text = "ClickControl",
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp
@@ -308,7 +223,8 @@ private fun TopTelemetryHeaderBar(
                             text = "BLE: ${bleState.name}",
                             bgColor = when (bleState) {
                                 BleConnectionState.CONNECTED_BOTH_PODS,
-                                BleConnectionState.CONNECTED_RIGHT_ONLY -> Color(0xFF064E3B)
+                                BleConnectionState.CONNECTED_RIGHT_ONLY,
+                                BleConnectionState.CONNECTED_LEFT_ONLY -> Color(0xFF064E3B)
                                 BleConnectionState.SCANNING,
                                 BleConnectionState.CONNECTING,
                                 BleConnectionState.HANDSHAKING -> Color(0xFF78350F)
@@ -317,7 +233,8 @@ private fun TopTelemetryHeaderBar(
                             },
                             textColor = when (bleState) {
                                 BleConnectionState.CONNECTED_BOTH_PODS,
-                                BleConnectionState.CONNECTED_RIGHT_ONLY -> Color(0xFF6EE7B7)
+                                BleConnectionState.CONNECTED_RIGHT_ONLY,
+                                BleConnectionState.CONNECTED_LEFT_ONLY -> Color(0xFF6EE7B7)
                                 BleConnectionState.SCANNING,
                                 BleConnectionState.CONNECTING,
                                 BleConnectionState.HANDSHAKING -> Color(0xFFFCD34D)
@@ -1025,7 +942,7 @@ private fun resolveShortLabel(
     button: ClickButton,
     pressType: PressType
 ): String {
-    val resolved = ButtonMappingStore.resolveAction(
+    val resolved = if (config.podAssignment != PodAssignment.LEGACY_SHARED) ButtonMappingStore.assignedAction(config.podAssignment, button, pressType) else ButtonMappingStore.resolveAction(
         mode = config.mode,
         button = button,
         pressType = pressType,
@@ -1075,6 +992,9 @@ private fun StudioKeymapInspectorTab(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        if (config.podAssignment != PodAssignment.LEGACY_SHARED) {
+            Text("Preset mappings are active. Editing a binding switches to custom legacy mappings.", color = Color(0xFFFCD34D), fontSize = 11.sp)
+        }
         // Spotlight Card for Currently Selected Physical Button
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -1147,6 +1067,7 @@ private fun StudioKeymapInspectorTab(
                     mode = editingMode,
                     button = selectedButton,
                     customBindings = config.customBindings,
+                    assignment = config.podAssignment,
                     onSelectAction = { pressType, target ->
                         val key = ModeButtonBindingKey(editingMode, selectedButton, pressType)
                         val updated = if (target == null) config.customBindings - key else config.customBindings + (key to target)
@@ -1207,6 +1128,7 @@ private fun StudioKeymapInspectorTab(
                     mode = editingMode,
                     button = button,
                     customBindings = config.customBindings,
+                    assignment = config.podAssignment,
                     onSelectAction = { pressType, target ->
                         val key = ModeButtonBindingKey(editingMode, button, pressType)
                         val updated = if (target == null) config.customBindings - key else config.customBindings + (key to target)
@@ -1339,28 +1261,33 @@ private fun StudioHardwareAndAutostartTab(
 
                 OptionToggleRow(
                     title = "Launch at OS Login (~/.config/autostart)",
-                    subtitle = "Automatically launches AnkiRide Bridge when you sign in to your desktop session",
+                    subtitle = "Automatically launches ClickControl when you sign in to your desktop session",
                     checked = osLoginAutostart,
                     onCheckedChange = { enabled ->
-                        osLoginAutostart = enabled
                         val file = File(System.getProperty("user.home") ?: ".", ".config/autostart/ankiride-bridge.desktop")
                         try {
                             if (enabled) {
+                                val launcher = System.getProperty("jpackage.app-path")?.let(::File)
+                                    ?: File("/opt/clickcontrol/bin/ClickControl")
+                                require(launcher.isFile && launcher.canExecute()) { "Install the packaged application before enabling login launch" }
+                                val escapedLauncher = launcher.absolutePath.replace("\\", "\\\\").replace("\"", "\\\"").replace("%", "%%")
                                 file.parentFile?.mkdirs()
                                 file.writeText(
                                     """
                                     [Desktop Entry]
                                     Type=Application
-                                    Name=AnkiRide Bridge
+                                    Name=ClickControl
                                     Comment=Zwift Click v2 Bridge for Anki & MyWhoosh
-                                    Exec=ankiride-bridge
+                                    Exec="$escapedLauncher"
                                     Terminal=false
                                     X-GNOME-Autostart-enabled=true
                                     """.trimIndent() + "\n"
                                 )
+                                osLoginAutostart = true
                                 DiagnosticLogger.info(LogCategory.SYSTEM, "Installed OS login autostart entry: ${file.absolutePath}")
                             } else if (file.exists()) {
-                                file.delete()
+                                check(file.delete()) { "Could not remove autostart entry" }
+                                osLoginAutostart = false
                                 DiagnosticLogger.info(LogCategory.SYSTEM, "Removed OS login autostart entry: ${file.absolutePath}")
                             }
                         } catch (e: Exception) {
@@ -1395,6 +1322,24 @@ private fun StudioHardwareAndAutostartTab(
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                var rightAddress by remember(config.pinnedRightPodMac) { mutableStateOf(config.pinnedRightPodMac.orEmpty()) }
+                var leftAddress by remember(config.pinnedLeftPodMac) { mutableStateOf(config.pinnedLeftPodMac.orEmpty()) }
+                var addressError by remember { mutableStateOf("") }
+                Text("Unknown devices appear in Live Logs. Enter the MAC address (or macOS Bluetooth UUID) to assign a side.", fontSize = 12.sp)
+                OutlinedTextField(value = rightAddress, onValueChange = { rightAddress = it }, label = { Text("Right pod address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = leftAddress, onValueChange = { leftAddress = it }, label = { Text("Left pod address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if (addressError.isNotEmpty()) Text(addressError, color = Color(0xFFFCA5A5), fontSize = 12.sp)
+                OutlinedButton(onClick = {
+                    val right = rightAddress.trim().ifEmpty { null }
+                    val left = leftAddress.trim().ifEmpty { null }
+                    val valid = { value: String? -> value == null || com.ankiride.bridge.ble.DesktopZwiftBleController.isValidMacOrUuid(value) }
+                    if (!valid(right) || !valid(left) || (right != null && right.equals(left, ignoreCase = true))) {
+                        addressError = "Enter distinct valid MAC addresses or Bluetooth UUIDs."
+                    } else {
+                        addressError = ""
+                        onConfigChange(config.copy(pinnedRightPodMac = right, pinnedLeftPodMac = left))
+                    }
+                }) { Text("Save addresses") }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = {
@@ -1651,10 +1596,11 @@ fun ColorCodedButtonCard(
     mode: OperatingMode,
     button: ClickButton,
     customBindings: Map<ModeButtonBindingKey, MappedTargetAction>,
+    assignment: PodAssignment = PodAssignment.LEGACY_SHARED,
     onSelectAction: (PressType, MappedTargetAction?) -> Unit
 ) {
-    val singleResolved = ButtonMappingStore.resolveAction(mode, button, PressType.SINGLE_CLICK, customBindings)
-    val longResolved = ButtonMappingStore.resolveAction(mode, button, PressType.LONG_PRESS, customBindings)
+    val singleResolved = if (assignment == PodAssignment.LEGACY_SHARED) ButtonMappingStore.resolveAction(mode, button, PressType.SINGLE_CLICK, customBindings) else ButtonMappingStore.assignedAction(assignment, button, PressType.SINGLE_CLICK)
+    val longResolved = if (assignment == PodAssignment.LEGACY_SHARED) ButtonMappingStore.resolveAction(mode, button, PressType.LONG_PRESS, customBindings) else ButtonMappingStore.assignedAction(assignment, button, PressType.LONG_PRESS)
 
     Card(
         modifier = Modifier.fillMaxWidth(),

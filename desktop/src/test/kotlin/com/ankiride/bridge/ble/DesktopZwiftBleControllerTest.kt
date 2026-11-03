@@ -57,6 +57,9 @@ class DesktopZwiftBleControllerTest {
     fun setUp() {
         testScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         controller = DesktopZwiftBleController(scope = testScope)
+        val parse = controller.javaClass.getDeclaredMethod("parseWorkerLine", String::class.java).apply { isAccessible = true }
+        parse.invoke(controller, "STATE CONNECTED_RIGHT AA:BB:CC:DD:EE:01")
+        parse.invoke(controller, "STATE CONNECTED_LEFT AA:BB:CC:DD:EE:02")
     }
 
     @After
@@ -215,6 +218,7 @@ class DesktopZwiftBleControllerTest {
         )
         parseWorkerLineMethod.isAccessible = true
 
+        controller.disconnect()
         fun parse(line: String) {
             parseWorkerLineMethod.invoke(controller, line)
         }
@@ -343,5 +347,52 @@ class DesktopZwiftBleControllerTest {
             nonExecResource.delete()
             tempResDir.delete()
         }
+    }
+    @Test
+    fun rejectsUnknownPodAndOppositeSideBits() {
+        controller.handleRawNotification("AA:BB:CC:DD:EE:03", buildPacket(ClickButton.B.bitmask.inv()))
+        assertNull(controller.podActiveMasks["AA:BB:CC:DD:EE:03"])
+        controller.handleRawNotification("AA:BB:CC:DD:EE:02", buildPacket(ClickButton.B.bitmask.inv()))
+        assertEquals(0, controller.podActiveMasks["AA:BB:CC:DD:EE:02"])
+    }
+    @Test
+    fun leftPodCanConnectFirstWithoutBecomingRight() {
+        controller.disconnect()
+        val parse = controller.javaClass.getDeclaredMethod("parseWorkerLine", String::class.java).apply { isAccessible = true }
+        parse.invoke(controller, "STATE CONNECTED_LEFT AA:BB:CC:DD:EE:02")
+        assertNull(controller.connectedRightMac.value)
+        assertEquals("AA:BB:CC:DD:EE:02", controller.connectedLeftMac.value)
+        assertEquals(BleConnectionState.CONNECTED_LEFT_ONLY, controller.connectionState.value)
+        parse.invoke(controller, "STATE CONNECTED_RIGHT AA:BB:CC:DD:EE:01")
+        assertEquals(BleConnectionState.CONNECTED_BOTH_PODS, controller.connectionState.value)
+        parse.invoke(controller, "STATE DISCONNECTED AA:BB:CC:DD:EE:01")
+        assertEquals(BleConnectionState.CONNECTED_LEFT_ONLY, controller.connectionState.value)
+    }
+    @Test
+    fun sideProtocolProbeAcceptsOnlyMatchingWorkersAndTimesOut() {
+        if (System.getProperty("os.name").lowercase().contains("win")) return
+        fun worker(body: String) = File.createTempFile("ble-probe", ".sh").apply {
+            writeText("#!/bin/sh\n$body\n"); setExecutable(true); deleteOnExit()
+        }
+        assertTrue(controller.supportsSideProtocol(worker("echo CLICKCONTROL_BLE_PROTOCOL_3")))
+        assertFalse(controller.supportsSideProtocol(worker("echo old-worker")))
+        assertFalse(controller.supportsSideProtocol(worker("exec sleep 10")))
+    }
+
+    @Test
+    fun rockerPacketsAreTranslatedToTheirSourceSide() {
+        val right = "AA:BB:CC:DD:EE:01"
+        val left = "AA:BB:CC:DD:EE:02"
+        controller.handleRawNotification(left, byteArrayOf(0x37, 0x08, 0x00))
+        assertEquals(ClickButton.SHIFT_UP_LEFT.bitmask, controller.podActiveMasks[left])
+        controller.handleRawNotification(right, byteArrayOf(0x37, 0x08, 0x01))
+        assertEquals(ClickButton.SHIFT_DOWN_RIGHT.bitmask, controller.podActiveMasks[right])
+    }
+    @Test
+    fun legacySharedPreservesOppositeSideBitsFromOneLink() {
+        controller.updateConfiguration(com.ankiride.bridge.core.AppConfiguration(podAssignment = com.ankiride.bridge.core.PodAssignment.LEGACY_SHARED))
+        val right = "AA:BB:CC:DD:EE:01"
+        controller.handleRawNotification(right, buildPacket(ClickButton.SHIFT_DOWN_LEFT.bitmask.inv()))
+        assertEquals(ClickButton.SHIFT_DOWN_LEFT.bitmask, controller.podActiveMasks[right])
     }
 }

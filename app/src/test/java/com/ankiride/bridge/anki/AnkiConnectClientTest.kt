@@ -236,4 +236,31 @@ class AnkiConnectClientTest {
             executor.shutdown()
         }
     }
+    @Test
+    fun falseShowAnswerDoesNotArmGrading() {
+        val client = AnkiConnectClient()
+        val server = ServerSocket(0)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            executor.submit {
+                server.accept().use { socket ->
+                    val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+                    var line = reader.readLine()
+                    var length = 0
+                    while (line != null && line.isNotEmpty()) {
+                        if (line.startsWith("Content-Length:", true)) length = line.substringAfter(":").trim().toInt()
+                        line = reader.readLine()
+                    }
+                    val body = CharArray(length)
+                    var offset = 0
+                    while (offset < length) { val n = reader.read(body, offset, length - offset); if (n < 0) break; offset += n }
+                    val response = """{"result": false, "error": null}"""
+                    socket.getOutputStream().write("HTTP/1.1 200 OK\r\nContent-Length: ${response.length}\r\nConnection: close\r\n\r\n$response".toByteArray())
+                }
+            }
+            assertFalse(client.dispatchAnkiConnectAction("127.0.0.1", server.localPort, AnkiAction.FLIP_OR_GOOD, 1000L))
+            assertFalse(client.isAnswerVisible)
+        } finally { server.close(); executor.shutdownNow() }
+    }
+
 }

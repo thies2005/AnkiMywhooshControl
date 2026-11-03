@@ -16,11 +16,14 @@ class ActionRouter(
 
     fun routeGesture(event: ButtonGestureEvent) {
         val config = configSupplier()
-        val target = ButtonMappingStore.resolveAction(
+        val target = PresetStore.resolve(config, event.button, event.type) ?: ButtonMappingStore.resolveAction(
             mode = config.mode,
             button = event.button,
             pressType = event.type,
-            customBindings = config.customBindings
+            customBindings = config.customBindings,
+            rightPodOnlyNoZwift = config.rightPodOnlyNoZwift,
+            useZForShiftDownInSinglePodMode = config.useZForShiftDownInSinglePodMode,
+            podAssignment = config.podAssignment
         )
 
         DiagnosticLogger.info(

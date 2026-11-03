@@ -83,9 +83,9 @@ object DiagnosticLogger {
         val snapshot = _logs.value.let { list ->
             if (filterCategory == null) list else list.filter { it.category == filterCategory }
         }
-        if (snapshot.isEmpty()) return "[AnkiRide Bridge Log Empty]"
+        if (snapshot.isEmpty()) return "[ClickControl Log Empty]"
         val sb = StringBuilder()
-        sb.appendLine("=== AnkiRide Bridge Diagnostic Log (${snapshot.size} entries) ===")
+        sb.appendLine("=== ClickControl Diagnostic Log (${snapshot.size} entries) ===")
         for (item in snapshot) {
             sb.append('[')
                 .append(item.formattedTime)

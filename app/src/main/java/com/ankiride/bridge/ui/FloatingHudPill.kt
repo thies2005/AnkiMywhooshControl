@@ -88,8 +88,8 @@ object FloatingHudPill {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = 24f * dm.density
-                setColor(Color.parseColor("#DD161B22"))
-                setStroke((1.5f * dm.density).roundToInt(), Color.parseColor("#58A6FF"))
+                setColor(Color.parseColor("#DD182A33"))
+                setStroke((1.5f * dm.density).roundToInt(), Color.parseColor("#70D8C8"))
             }
         }
 

@@ -10,8 +10,35 @@ import java.util.Properties
 import java.util.prefs.Preferences
 
 object ButtonMappingStore {
+    internal var fallbackPreferences: () -> Preferences = { Preferences.userNodeForPackage(ButtonMappingStore::class.java) }
+    private const val FALLBACK_PATH = "active_fallback_path"
+
+
+    fun assignedAction(assignment: PodAssignment, button: ClickButton, press: PressType): MappedTargetAction {
+        val b = button.canonicalButton
+        if (b.isRightPod) return when (b) {
+            ClickButton.Y -> if (press == PressType.LONG_PRESS) MappedTargetAction.ANKI_UNDO else MappedTargetAction.ANKI_FLIP_OR_AGAIN
+            ClickButton.Z -> if (press == PressType.LONG_PRESS) MappedTargetAction.ANKI_UNDO else MappedTargetAction.ANKI_FLIP_OR_HARD
+            ClickButton.A -> if (press == PressType.LONG_PRESS) MappedTargetAction.ANKI_FLIP_OR_EASY else MappedTargetAction.ANKI_FLIP_OR_GOOD
+            ClickButton.B -> if (press == PressType.LONG_PRESS) MappedTargetAction.ANKI_UNDO else MappedTargetAction.ANKI_FLIP_OR_GOOD
+            ClickButton.SHIFT_UP_RIGHT -> if (press == PressType.LONG_PRESS) MappedTargetAction.ANKI_UNDO else MappedTargetAction.ANKI_FLIP_ONLY
+            ClickButton.SHIFT_DOWN_RIGHT -> if (press == PressType.LONG_PRESS) MappedTargetAction.ANKI_UNDO else MappedTargetAction.ANKI_FLIP_OR_AGAIN
+            else -> MappedTargetAction.NONE
+        }
+        if (assignment != PodAssignment.RIGHT_ANKI_LEFT_BIKE) return MappedTargetAction.NONE
+        return when (b) {
+            ClickButton.SHIFT_UP_LEFT -> MappedTargetAction.MW_SHIFT_UP
+            ClickButton.SHIFT_DOWN_LEFT -> if (press == PressType.LONG_PRESS) MappedTargetAction.MW_SHIFT_UP else MappedTargetAction.MW_SHIFT_DOWN
+            ClickButton.LEFT -> MappedTargetAction.MW_STEER_LEFT
+            ClickButton.RIGHT -> MappedTargetAction.MW_STEER_RIGHT
+            ClickButton.UP -> MappedTargetAction.MW_CAMERA
+            ClickButton.DOWN -> MappedTargetAction.MW_EMOTE
+            else -> MappedTargetAction.NONE
+        }
+    }
 
     private const val KEY_MODE = "operating_mode"
+    private const val KEY_ASSIGNMENT = "pod_assignment"
     private const val KEY_RIGHT_POD_ONLY = "right_pod_only"
     const val KEY_USE_Z_SHIFT_DOWN = "use_z_for_shift_down"
     private const val KEY_USE_Z_FOR_SHIFT_DOWN = KEY_USE_Z_SHIFT_DOWN
@@ -44,7 +71,7 @@ object ButtonMappingStore {
         rightPodOnlyNoZwift: Boolean = false,
         useZForShiftDownInSinglePodMode: Boolean = false
     ): MappedTargetAction {
-        val canonical = button.canonicalButton
+        val canonical = when (button) { ClickButton.SHIFT_UP_LEFT -> ClickButton.SHIFT_UP_RIGHT; ClickButton.SHIFT_DOWN_RIGHT -> ClickButton.SHIFT_DOWN_LEFT; else -> button.canonicalButton }
         val key = ModeButtonBindingKey(mode, canonical, pressType)
         customBindings[key]?.let { return it }
 
@@ -72,7 +99,7 @@ object ButtonMappingStore {
         rightPodOnlyNoZwift: Boolean = false,
         useZForShiftDownInSinglePodMode: Boolean = false
     ): MappedTargetAction {
-        val canonical = button.canonicalButton
+        val canonical = when (button) { ClickButton.SHIFT_UP_LEFT -> ClickButton.SHIFT_UP_RIGHT; ClickButton.SHIFT_DOWN_RIGHT -> ClickButton.SHIFT_DOWN_LEFT; else -> button.canonicalButton }
         if (rightPodOnlyNoZwift && useZForShiftDownInSinglePodMode) {
             if (canonical == ClickButton.Z && pressType == PressType.SINGLE_CLICK) {
                 when (mode) {
@@ -151,6 +178,8 @@ object ButtonMappingStore {
     fun loadConfiguration(file: File = defaultSettingsFile()): AppConfiguration {
         val props = Properties()
         var loadedFromFile = false
+        val fallbackSelected = try { fallbackPreferences().get(FALLBACK_PATH, null) == file.absoluteFile.normalize().path } catch (_: Exception) { false }
+        if (fallbackSelected) loadFromPreferencesFallback()?.let { return it }
 
         if (file.exists() && file.isFile) {
             try {
@@ -168,7 +197,13 @@ object ButtonMappingStore {
         if (!loadedFromFile) {
             val fallback = loadFromPreferencesFallback()
             if (fallback != null) {
-                return fallback
+                if (fallback.presets.isNotEmpty()) return fallback
+                val modes = OperatingMode.entries
+                val presets = modes.map { mode -> PresetStore.snapshot("Imported · ${mode.shortTitle}", AnkiTarget.ANKICONNECT) { button, press ->
+                    if (fallback.podAssignment != PodAssignment.LEGACY_SHARED) assignedAction(fallback.podAssignment, button, press)
+                    else resolveAction(mode, button, press, fallback.customBindings, fallback.rightPodOnlyNoZwift, fallback.useZForShiftDownInSinglePodMode)
+                } }
+                return fallback.copy(presets = presets, activePresetId = presets[modes.indexOf(fallback.mode)].id)
             }
         }
 
@@ -188,15 +223,16 @@ object ButtonMappingStore {
             }
         }
 
-        return AppConfiguration(
+        val config = AppConfiguration(
             mode = mode,
+            podAssignment = props.getProperty(KEY_ASSIGNMENT)?.let { name -> PodAssignment.entries.firstOrNull { it.name == name } } ?: if (loadedFromFile) PodAssignment.LEGACY_SHARED else PodAssignment.RIGHT_ANKI_ONLY,
             rightPodOnlyNoZwift = props.getProperty(KEY_RIGHT_POD_ONLY, "true").toBoolean(),
             useZForShiftDownInSinglePodMode = props.getProperty(KEY_USE_Z_FOR_SHIFT_DOWN, "true").toBoolean(),
             autoStartOnControllerWake = props.getProperty(KEY_AUTO_START, "true").toBoolean(),
             floatingHudPillEnabled = props.getProperty(KEY_FLOATING_HUD, "false").toBoolean(),
             hapticFeedbackEnabled = props.getProperty(KEY_HAPTIC, "false").toBoolean(),
             audioFeedbackEnabled = props.getProperty(KEY_AUDIO, "false").toBoolean(),
-            ubuntuAnkiConnectHost = props.getProperty(KEY_UBUNTU_HOST, "192.168.1.100").trim(),
+            ubuntuAnkiConnectHost = props.getProperty(KEY_UBUNTU_HOST, if (loadedFromFile) "192.168.1.100" else "127.0.0.1").trim(),
             ubuntuAnkiConnectPort = props.getProperty(KEY_UBUNTU_PORT, "8765").toIntOrNull() ?: 8765,
             leftPodAutoReconnectSec = props.getProperty(KEY_LEFT_POD_RECONNECT, "55").toIntOrNull() ?: 55,
             openBikeServerPort = props.getProperty(KEY_OPENBIKE_PORT, "21587").toIntOrNull() ?: 21587,
@@ -209,11 +245,31 @@ object ButtonMappingStore {
             pinnedLeftPodMac = props.getProperty(KEY_PINNED_LEFT_MAC)?.takeIf { it.isNotBlank() },
             customBindings = customBindings
         )
+        val saved = PresetStore.deserialize(props.getProperty("named_presets_v1"))
+        if (saved != null) return config.copy(presets = saved.first, activePresetId = saved.second ?: saved.first.first().id)
+        val modes = if (loadedFromFile) OperatingMode.entries else listOf(mode)
+        val presets = modes.map { oldMode ->
+            PresetStore.snapshot(if (loadedFromFile) "Imported · ${oldMode.shortTitle}" else "My controls", AnkiTarget.ANKICONNECT) { button, press ->
+                if (config.podAssignment != PodAssignment.LEGACY_SHARED) assignedAction(config.podAssignment, button, press)
+                else resolveAction(oldMode, button, press, config.customBindings, config.rightPodOnlyNoZwift, config.useZForShiftDownInSinglePodMode)
+            }
+        }
+        return config.copy(presets = presets, activePresetId = presets[modes.indexOf(mode).coerceAtLeast(0)].id)
     }
 
     fun saveConfiguration(config: AppConfiguration, file: File = defaultSettingsFile()) {
         val props = Properties()
+        if (file.exists()) {
+            try { file.inputStream().bufferedReader(StandardCharsets.UTF_8).use { props.load(it) } }
+            catch (e: Exception) {
+                DiagnosticLogger.error(LogCategory.SYSTEM, "Cannot safely update unreadable settings: ${e.message}")
+                saveToPreferencesFallback(config, file)
+                return
+            }
+        }
+        if (config.presets.isNotEmpty()) props.setProperty("named_presets_v1", PresetStore.serialize(config.presets, config.activePresetId))
         props.setProperty(KEY_MODE, config.mode.name)
+        props.setProperty(KEY_ASSIGNMENT, config.podAssignment.name)
         props.setProperty(KEY_RIGHT_POD_ONLY, config.rightPodOnlyNoZwift.toString())
         props.setProperty(KEY_USE_Z_FOR_SHIFT_DOWN, config.useZForShiftDownInSinglePodMode.toString())
         props.setProperty(KEY_AUTO_START, config.autoStartOnControllerWake.toString())
@@ -239,14 +295,21 @@ object ButtonMappingStore {
 
         try {
             file.parentFile?.mkdirs()
-            FileOutputStream(file).use { fos ->
-                OutputStreamWriter(fos, StandardCharsets.UTF_8).use { writer ->
-                    props.store(writer, "AnkiRideBridge Desktop Settings")
+            val temp = File.createTempFile("settings-", ".tmp", file.absoluteFile.parentFile)
+            try {
+                FileOutputStream(temp).use { fos ->
+                    OutputStreamWriter(fos, StandardCharsets.UTF_8).use { writer -> props.store(writer, "AnkiRideBridge Desktop Settings") }
                 }
-            }
+                try { java.nio.file.Files.move(temp.toPath(), file.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING) }
+                catch (_: java.nio.file.AtomicMoveNotSupportedException) { java.nio.file.Files.move(temp.toPath(), file.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING) }
+            } finally { temp.delete() }
+            try {
+                val prefs = fallbackPreferences()
+                if (prefs.get(FALLBACK_PATH, null) == file.absoluteFile.normalize().path) { prefs.remove(FALLBACK_PATH); prefs.flush() }
+            } catch (e: Exception) { DiagnosticLogger.warn(LogCategory.SYSTEM, "Could not clear settings fallback marker: ${e.message}") }
         } catch (e: Exception) {
             DiagnosticLogger.error(LogCategory.SYSTEM, "Failed to save settings to ${file.absolutePath}: ${e.message}")
-            saveToPreferencesFallback(config)
+            saveToPreferencesFallback(config, file)
         }
     }
 
@@ -255,11 +318,15 @@ object ButtonMappingStore {
 
     private fun loadFromPreferencesFallback(): AppConfiguration? {
         return try {
-            val prefs = Preferences.userNodeForPackage(ButtonMappingStore::class.java)
+            val prefs = fallbackPreferences()
             val modeName = prefs.get(KEY_MODE, null) ?: return null
             val mode = OperatingMode.entries.firstOrNull { it.name == modeName } ?: OperatingMode.MODE_1_TABLET_SPLIT_SCREEN
+            val saved = readFallbackPresets(prefs)
             AppConfiguration(
+                presets = saved?.first ?: emptyList(),
+                activePresetId = saved?.second,
                 mode = mode,
+                podAssignment = prefs.get(KEY_ASSIGNMENT, null)?.let { name -> PodAssignment.entries.firstOrNull { it.name == name } } ?: PodAssignment.LEGACY_SHARED,
                 rightPodOnlyNoZwift = prefs.getBoolean(KEY_RIGHT_POD_ONLY, true),
                 useZForShiftDownInSinglePodMode = prefs.getBoolean(KEY_USE_Z_FOR_SHIFT_DOWN, true),
                 autoStartOnControllerWake = prefs.getBoolean(KEY_AUTO_START, true),
@@ -283,10 +350,28 @@ object ButtonMappingStore {
         }
     }
 
-    private fun saveToPreferencesFallback(config: AppConfiguration) {
+    internal fun readFallbackPresets(prefs: Preferences): Pair<List<MappingPreset>, String?>? {
+        val count = prefs.getInt("named_presets_parts", 0)
+        if (count !in 1..1000) return null
+        val raw = (0 until count).map { prefs.get("named_presets_part_$it", null) ?: return null }.joinToString("")
+        return PresetStore.deserialize(raw)
+    }
+
+    internal fun writeFallbackPresets(prefs: Preferences, config: AppConfiguration) {
+        if (config.presets.isEmpty()) return
+        val chunks = PresetStore.serialize(config.presets, config.activePresetId).chunked(6000)
+        val oldCount = prefs.getInt("named_presets_parts", 0).coerceIn(0, 1000)
+        chunks.forEachIndexed { i, chunk -> prefs.put("named_presets_part_$i", chunk) }
+        for (i in chunks.size until oldCount) prefs.remove("named_presets_part_$i")
+        prefs.putInt("named_presets_parts", chunks.size)
+    }
+
+    private fun saveToPreferencesFallback(config: AppConfiguration, file: File) {
         try {
-            val prefs = Preferences.userNodeForPackage(ButtonMappingStore::class.java)
+            val prefs = fallbackPreferences()
+            writeFallbackPresets(prefs, config)
             prefs.put(KEY_MODE, config.mode.name)
+            prefs.put(KEY_ASSIGNMENT, config.podAssignment.name)
             prefs.putBoolean(KEY_RIGHT_POD_ONLY, config.rightPodOnlyNoZwift)
             prefs.putBoolean(KEY_USE_Z_FOR_SHIFT_DOWN, config.useZForShiftDownInSinglePodMode)
             prefs.putBoolean(KEY_AUTO_START, config.autoStartOnControllerWake)
@@ -302,10 +387,12 @@ object ButtonMappingStore {
             prefs.putFloat(KEY_SHIFT_UP_Y, config.myShiftUpNormalizedY)
             prefs.putFloat(KEY_SHIFT_DOWN_X, config.myShiftDownNormalizedX)
             prefs.putFloat(KEY_SHIFT_DOWN_Y, config.myShiftDownNormalizedY)
-            if (config.pinnedRightPodMac != null) prefs.put(KEY_PINNED_RIGHT_MAC, config.pinnedRightPodMac)
-            if (config.pinnedLeftPodMac != null) prefs.put(KEY_PINNED_LEFT_MAC, config.pinnedLeftPodMac)
+            if (config.pinnedRightPodMac != null) prefs.put(KEY_PINNED_RIGHT_MAC, config.pinnedRightPodMac) else prefs.remove(KEY_PINNED_RIGHT_MAC)
+            if (config.pinnedLeftPodMac != null) prefs.put(KEY_PINNED_LEFT_MAC, config.pinnedLeftPodMac) else prefs.remove(KEY_PINNED_LEFT_MAC)
+            prefs.put(FALLBACK_PATH, file.absoluteFile.normalize().path)
             prefs.flush()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            DiagnosticLogger.error(LogCategory.SYSTEM, "Failed to save settings fallback: ${e.message}")
         }
     }
 }

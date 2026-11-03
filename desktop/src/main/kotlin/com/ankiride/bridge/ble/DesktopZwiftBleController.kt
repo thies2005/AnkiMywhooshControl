@@ -66,6 +66,7 @@ class DesktopZwiftBleController(
     fun updateConfiguration(config: AppConfiguration) {
         val needsRestart = isRunningBridge && (
             currentConfig.rightPodOnlyNoZwift != config.rightPodOnlyNoZwift ||
+            currentConfig.podAssignment != config.podAssignment ||
             currentConfig.pinnedRightPodMac != config.pinnedRightPodMac ||
             currentConfig.pinnedLeftPodMac != config.pinnedLeftPodMac ||
             currentConfig.leftPodAutoReconnectSec != config.leftPodAutoReconnectSec
@@ -73,7 +74,7 @@ class DesktopZwiftBleController(
         currentConfig = config
         if (needsRestart) {
             DiagnosticLogger.info(LogCategory.BLE, "BLE pod configuration changed; restarting BLE worker automatically...")
-            startBleWorkerProcess(config)
+            startScanAndConnect(config)
         }
     }
 
@@ -120,14 +121,14 @@ class DesktopZwiftBleController(
                 var process: Process? = null
                 var stderrJob: Job? = null
                 try {
-                    val nativeBinary = findNativeWorkerBinary()
+                    val nativeBinary = findNativeWorkerBinary()?.takeIf { supportsSideProtocol(it) }
                     val command: MutableList<String>
 
                     if (nativeBinary != null) {
                         DiagnosticLogger.info(LogCategory.BLE, "Spawning standalone native BLE worker binary: ${nativeBinary.absolutePath}")
                         command = mutableListOf(
                             nativeBinary.absolutePath,
-                            "--right-only", currentConfig.rightPodOnlyNoZwift.toString()
+                            "--right-only", (currentConfig.podAssignment == PodAssignment.RIGHT_ANKI_ONLY || (currentConfig.podAssignment == PodAssignment.LEGACY_SHARED && currentConfig.rightPodOnlyNoZwift)).toString()
                         )
                     } else {
                         val scriptFile = extractWorkerScript()
@@ -149,9 +150,11 @@ class DesktopZwiftBleController(
                         command = mutableListOf(
                             pythonCmd,
                             scriptFile.absolutePath,
-                            "--right-only", currentConfig.rightPodOnlyNoZwift.toString()
+                            "--right-only", (currentConfig.podAssignment == PodAssignment.RIGHT_ANKI_ONLY || (currentConfig.podAssignment == PodAssignment.LEGACY_SHARED && currentConfig.rightPodOnlyNoZwift)).toString()
                         )
                     }
+
+                    command.addAll(listOf("--legacy-shared", (currentConfig.podAssignment == PodAssignment.LEGACY_SHARED).toString()))
 
                     if (!currentConfig.pinnedRightPodMac.isNullOrBlank()) {
                         if (isValidMacOrUuid(currentConfig.pinnedRightPodMac)) {
@@ -201,6 +204,11 @@ class DesktopZwiftBleController(
                     }
 
                     val exitCode = proc.waitFor()
+                    podActiveMasks.clear()
+                    gestureEngine.reset()
+                    synchronized(currentButtonMapLock) { ClickButton.entries.forEach { currentButtonMap[it] = false } }
+                    _connectedRightMac.value = null
+                    _connectedLeftMac.value = null
                     stderrJob.cancel()
                     DiagnosticLogger.warn(LogCategory.BLE, "BLE worker process terminated with exitCode=$exitCode")
 
@@ -256,13 +264,19 @@ class DesktopZwiftBleController(
 
                 when (stateName) {
                     "SCANNING" -> {
-                        _connectionState.value = BleConnectionState.SCANNING
+                        if (_connectedRightMac.value == null && _connectedLeftMac.value == null) _connectionState.value = BleConnectionState.SCANNING
                     }
                     "CONNECTING" -> {
                         _connectionState.value = BleConnectionState.CONNECTING
                     }
                     "HANDSHAKING" -> {
                         _connectionState.value = BleConnectionState.HANDSHAKING
+                    }
+                    "CONNECTED_RIGHT", "CONNECTED_LEFT" -> {
+                        if (mac == null) return
+                        if (stateName == "CONNECTED_RIGHT") _connectedRightMac.value = mac else _connectedLeftMac.value = mac
+                        _connectionState.value = if (_connectedRightMac.value != null && _connectedLeftMac.value != null)
+                            BleConnectionState.CONNECTED_BOTH_PODS else if (_connectedRightMac.value != null) BleConnectionState.CONNECTED_RIGHT_ONLY else BleConnectionState.CONNECTED_LEFT_ONLY
                     }
                     "CONNECTED_RIGHT_ONLY" -> {
                         if (mac != null) _connectedRightMac.value = mac
@@ -279,6 +293,7 @@ class DesktopZwiftBleController(
                     "DISCONNECTED" -> {
                         if (mac != null) {
                             podActiveMasks.remove(mac)
+                            gestureEngine.reset()
                             if (_connectedRightMac.value.equals(mac, ignoreCase = true)) {
                                 _connectedRightMac.value = null
                             }
@@ -289,6 +304,8 @@ class DesktopZwiftBleController(
                         }
                         if (_connectedRightMac.value != null) {
                             _connectionState.value = BleConnectionState.CONNECTED_RIGHT_ONLY
+                        } else if (_connectedLeftMac.value != null) {
+                            _connectionState.value = BleConnectionState.CONNECTED_LEFT_ONLY
                         } else {
                             _connectionState.value = BleConnectionState.DISCONNECTED
                         }
@@ -335,14 +352,26 @@ class DesktopZwiftBleController(
         // Suppress periodic idle keep-alive heartbeats (0x15, 0x19)
         if (msgId == 0x15.toByte() || msgId == 0x19.toByte()) return
 
-        val mask = ZwiftPacketParser.parseActiveButtonMask(payload)
+        val isRight = _connectedRightMac.value.equals(mac, ignoreCase = true)
+        val isLeft = _connectedLeftMac.value.equals(mac, ignoreCase = true)
+        if (!isRight && !isLeft) return
+        var mask = ZwiftPacketParser.parseActiveButtonMask(payload)
+        if (mask != null && currentConfig.podAssignment != PodAssignment.LEGACY_SHARED && payload[0] == ZwiftPacketParser.MSG_CLICK_V1_SHIFT) {
+            mask = when {
+                isLeft && mask == ClickButton.SHIFT_UP_RIGHT.bitmask -> ClickButton.SHIFT_UP_LEFT.bitmask
+                isRight && mask == ClickButton.SHIFT_DOWN_LEFT.bitmask -> ClickButton.SHIFT_DOWN_RIGHT.bitmask
+                else -> mask
+            }
+        }
         if (mask == null) {
             val hex = payload.joinToString(" ") { "%02X".format(it) }
             DiagnosticLogger.info(LogCategory.PACKET, "Non-0x23 packet from $mac (msgId=0x${"%02X".format(msgId)}): [$hex]")
             return
         }
 
-        val prevMask = podActiveMasks.put(mac, mask) ?: 0
+        val allowedMask = ClickButton.entries.filter { it.isRightPod == isRight }.fold(0) { acc, button -> acc or button.bitmask }
+        val sideMask = if (currentConfig.podAssignment == PodAssignment.LEGACY_SHARED) mask else mask and allowedMask
+        val prevMask = podActiveMasks.put(mac, sideMask) ?: 0
         val hex = payload.joinToString(" ") { "%02X".format(it) }
         if (mask != 0 || prevMask != 0 || lastLoggedPayloadHex.put(mac, hex) != hex) {
             if (mask != 0) {
@@ -400,6 +429,7 @@ class DesktopZwiftBleController(
         workerProcess = null
 
         podActiveMasks.clear()
+        gestureEngine.reset()
         lastLoggedPayloadHex.clear()
         synchronized(currentButtonMapLock) {
             ClickButton.entries.forEach { currentButtonMap[it] = false }
@@ -457,6 +487,22 @@ class DesktopZwiftBleController(
         }
 
         return null
+    }
+
+    internal fun supportsSideProtocol(binary: File): Boolean {
+        var process: Process? = null
+        return try {
+            process = ProcessBuilder(binary.absolutePath, "--protocol-version").redirectErrorStream(true).start()
+            if (!process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                false
+            } else {
+                process.exitValue() == 0 && process.inputStream.bufferedReader().use { it.readText().trim() } == "CLICKCONTROL_BLE_PROTOCOL_3"
+            }
+        } catch (_: Exception) {
+            false
+        } finally {
+            process?.let { if (it.isAlive) it.destroyForcibly() }
+        }
     }
 
     fun findNativeWorkerBinary(): File? {

@@ -100,7 +100,7 @@ jobs:
               exit 1
             fi
 
-            BIN=$(find build/compose/binaries/main/app desktop/build/compose/binaries/main/app -type f -name "AnkiRideBridge" -path "*/bin/*" 2>/dev/null | head -n 1)
+            BIN=$(find build/compose/binaries/main/app desktop/build/compose/binaries/main/app -type f -name "ClickControl" -path "*/bin/*" 2>/dev/null | head -n 1)
             if [ -n "$BIN" ]; then
               chmod +x "$BIN"
               xvfb-run "$BIN" --self-test || "$BIN" --self-test
@@ -119,7 +119,7 @@ jobs:
               exit 1
             fi
 
-            BIN=$(find build/compose/binaries/main/app desktop/build/compose/binaries/main/app -type f -name "AnkiRideBridge" -path "*/MacOS/*" 2>/dev/null | head -n 1)
+            BIN=$(find build/compose/binaries/main/app desktop/build/compose/binaries/main/app -type f -name "ClickControl" -path "*/MacOS/*" 2>/dev/null | head -n 1)
             if [ -n "$BIN" ]; then
               chmod +x "$BIN"
               "$BIN" --self-test
@@ -137,7 +137,7 @@ jobs:
               exit 1
             fi
 
-            BIN=$(find build/compose/binaries/main/app desktop/build/compose/binaries/main/app -type f -name "AnkiRideBridge.exe" 2>/dev/null | head -n 1)
+            BIN=$(find build/compose/binaries/main/app desktop/build/compose/binaries/main/app -type f -name "ClickControl.exe" 2>/dev/null | head -n 1)
             if [ -n "$BIN" ]; then
               "$BIN" --self-test
             else
@@ -166,12 +166,12 @@ jobs:
           cat << 'EOF' > First_Time_Launch_Mac.command
           #!/bin/bash
           cd "$(dirname "$0")"
-          if [ -d "AnkiRideBridge.app" ]; then
-            xattr -cr "AnkiRideBridge.app"
-            open "AnkiRideBridge.app"
-          elif [ -d "/Applications/AnkiRideBridge.app" ]; then
-            xattr -cr "/Applications/AnkiRideBridge.app"
-            open "/Applications/AnkiRideBridge.app"
+          if [ -d "ClickControl.app" ]; then
+            xattr -cr "ClickControl.app"
+            open "ClickControl.app"
+          elif [ -d "/Applications/ClickControl.app" ]; then
+            xattr -cr "/Applications/ClickControl.app"
+            open "/Applications/ClickControl.app"
           else
             xattr -cr *.app 2>/dev/null || true
             open *.app
@@ -187,20 +187,20 @@ jobs:
           cp First_Time_Launch_Mac.command "$DMG_STAGE/"
           ln -s /Applications "$DMG_STAGE/Applications"
 
-          DMG_OUT="release-assets/AnkiRideBridge-macos-arm64-4.0.0-alpha.${{ github.run_number }}.dmg"
-          hdiutil create -volname "AnkiRideBridge" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG_OUT"
+          DMG_OUT="release-assets/ClickControl-macos-arm64-4.0.0-alpha.${{ github.run_number }}.dmg"
+          hdiutil create -volname "ClickControl" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG_OUT"
           rm -rf "$DMG_STAGE"
 
           # Also overwrite build/compose/binaries/main/dmg so workflow artifacts contain the signed DMG
           mkdir -p build/compose/binaries/main/dmg desktop/build/compose/binaries/main/dmg
-          cp "$DMG_OUT" build/compose/binaries/main/dmg/AnkiRideBridge-4.0.0.dmg
-          cp "$DMG_OUT" desktop/build/compose/binaries/main/dmg/AnkiRideBridge-4.0.0.dmg
+          cp "$DMG_OUT" build/compose/binaries/main/dmg/ClickControl-4.0.0.dmg
+          cp "$DMG_OUT" desktop/build/compose/binaries/main/dmg/ClickControl-4.0.0.dmg
 
           # Create symlink-preserving macOS zip archive (via ditto) with signed .app + helper
           ZIP_STAGE=$(mktemp -d)
           cp -R "$APP_PATH" "$ZIP_STAGE/"
           cp First_Time_Launch_Mac.command "$ZIP_STAGE/"
-          ditto -c -k --sequesterRsrc "$ZIP_STAGE" "release-assets/AnkiRideBridge-macos-arm64-4.0.0-alpha.${{ github.run_number }}-app.zip"
+          ditto -c -k --sequesterRsrc "$ZIP_STAGE" "release-assets/ClickControl-macos-arm64-4.0.0-alpha.${{ github.run_number }}-app.zip"
           rm -rf "$ZIP_STAGE"
           ls -lh release-assets/
 
@@ -208,22 +208,22 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           mkdir -p release-assets
-          APP_DIR=$(find desktop/build/compose/binaries/main/app build/compose/binaries/main/app -maxdepth 2 -type d -name "AnkiRideBridge" 2>/dev/null | head -n 1)
+          APP_DIR=$(find desktop/build/compose/binaries/main/app build/compose/binaries/main/app -maxdepth 2 -type d -name "ClickControl" 2>/dev/null | head -n 1)
           if [ -n "$APP_DIR" ]; then
             find "$APP_DIR" -type f -name "zwift_ble_worker" -exec chmod 0755 {} +
             find "$APP_DIR/bin" -type f -exec chmod 0755 {} +
-            tar -czf "release-assets/AnkiRideBridge-linux-x64-4.0.0-alpha.${{ github.run_number }}-portable.tar.gz" -C "$(dirname "$APP_DIR")" "$(basename "$APP_DIR")"
+            tar -czf "release-assets/ClickControl-linux-x64-4.0.0-alpha.${{ github.run_number }}-portable.tar.gz" -C "$(dirname "$APP_DIR")" "$(basename "$APP_DIR")"
           fi
 
           DEB_FILE=$(find desktop/build/compose/binaries/main/deb build/compose/binaries/main/deb -type f -name "*.deb" 2>/dev/null | head -n 1)
           if [ -n "$DEB_FILE" ]; then
-            # Repack .deb to guarantee 0755 executable permissions on bundled zwift_ble_worker inside /opt/ankiridebridge
+            # Repack .deb to guarantee 0755 executable permissions on bundled zwift_ble_worker inside /opt/clickcontrol
             DEB_TMP=$(mktemp -d)
             dpkg-deb -R "$DEB_FILE" "$DEB_TMP"
             find "$DEB_TMP" -type f -name "zwift_ble_worker" -exec chmod 0755 {} +
             dpkg-deb -b "$DEB_TMP" "$DEB_FILE"
             rm -rf "$DEB_TMP"
-            cp "$DEB_FILE" "release-assets/AnkiRideBridge-linux-amd64-4.0.0-alpha.${{ github.run_number }}.deb"
+            cp "$DEB_FILE" "release-assets/ClickControl-linux-amd64-4.0.0-alpha.${{ github.run_number }}.deb"
           fi
           ls -lh release-assets/
 
@@ -233,24 +233,24 @@ jobs:
           mkdir -p release-assets
           MSI_FILE=$(find desktop/build/compose/binaries/main/msi build/compose/binaries/main/msi -type f -name "*.msi" 2>/dev/null | head -n 1)
           if [ -n "$MSI_FILE" ]; then
-            cp "$MSI_FILE" "release-assets/AnkiRideBridge-windows-x64-4.0.0-alpha.${{ github.run_number }}.msi"
+            cp "$MSI_FILE" "release-assets/ClickControl-windows-x64-4.0.0-alpha.${{ github.run_number }}.msi"
           fi
 
           EXE_FILE=$(find desktop/build/compose/binaries/main/exe build/compose/binaries/main/exe -type f -name "*.exe" 2>/dev/null | head -n 1)
           if [ -n "$EXE_FILE" ]; then
-            cp "$EXE_FILE" "release-assets/AnkiRideBridge-windows-x64-4.0.0-alpha.${{ github.run_number }}-setup.exe"
+            cp "$EXE_FILE" "release-assets/ClickControl-windows-x64-4.0.0-alpha.${{ github.run_number }}-setup.exe"
           fi
 
-          APP_DIR=$(find desktop/build/compose/binaries/main/app build/compose/binaries/main/app -maxdepth 2 -type d -name "AnkiRideBridge" 2>/dev/null | head -n 1)
+          APP_DIR=$(find desktop/build/compose/binaries/main/app build/compose/binaries/main/app -maxdepth 2 -type d -name "ClickControl" 2>/dev/null | head -n 1)
           if [ -n "$APP_DIR" ]; then
-            powershell -NoProfile -Command "Compress-Archive -Path '$APP_DIR' -DestinationPath 'release-assets/AnkiRideBridge-windows-x64-4.0.0-alpha.${{ github.run_number }}-portable.zip' -Force"
+            powershell -NoProfile -Command "Compress-Archive -Path '$APP_DIR' -DestinationPath 'release-assets/ClickControl-windows-x64-4.0.0-alpha.${{ github.run_number }}-portable.zip' -Force"
           fi
           ls -lh release-assets/
 
       - name: Upload Desktop Installer & App Bundle Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AnkiRideBridge-${{ matrix.os }}
+          name: ClickControl-${{ matrix.os }}
           path: |
             release-assets/*
           if-no-files-found: error
@@ -287,8 +287,8 @@ jobs:
           mkdir -p release-assets
           RELEASE_APK=$(find app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)
           if [ -n "$RELEASE_APK" ]; then
-            cp "$RELEASE_APK" "release-assets/AnkiRideBridge-android-4.0.0-beta.${{ github.run_number }}.apk"
-            echo "Staged Android Release APK: release-assets/AnkiRideBridge-android-4.0.0-beta.${{ github.run_number }}.apk"
+            cp "$RELEASE_APK" "release-assets/ClickControl-android-4.0.0-beta.${{ github.run_number }}.apk"
+            echo "Staged Android Release APK: release-assets/ClickControl-android-4.0.0-beta.${{ github.run_number }}.apk"
           else
             echo "ERROR: Android release APK not found!"
             exit 1
@@ -298,7 +298,7 @@ jobs:
       - name: Upload Android APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AnkiRideBridge-android
+          name: ClickControl-android
           path: release-assets/*
           if-no-files-found: error
 
@@ -335,34 +335,34 @@ jobs:
           TITLE="Release #${{ github.run_number }} — Android (Beta) & Desktop (Alpha) [${SHORT_SHA}]"
 
           cat << 'EOF' > release_notes.md
-          ## AnkiRide Bridge — Release
+          ## ClickControl — Release
 
           ### Release Channel Status
-          - 📱 **Android**: **Beta** (Feature-complete, fully tested with AnkiDroid & MyWhoosh)
-          - 🖥️ **Desktop (Ubuntu, macOS, Windows)**: **Alpha** (Option A Studio Split-Pane, active development)
+          - 📱 **Android**: **Beta** (Requires validation with your controller and target apps)
+          - 🖥️ **Desktop (Ubuntu, macOS, Windows)**: **Alpha** (Control, Presets and Settings; named button mappings)
 
           ---
 
           ### 📱 Android Downloads (Beta Channel)
-          - `AnkiRideBridge-android-4.0.0-beta.BUILD_NUMBER.apk` — Standalone Android application for phone and tablet.
+          - `ClickControl-android-4.0.0-beta.BUILD_NUMBER.apk` — Standalone Android application for phone and tablet.
 
           ---
 
           ### 🖥️ Desktop Downloads (Alpha Channel)
 
           #### Ubuntu / Debian Linux (`x86_64`)
-          - `AnkiRideBridge-linux-amd64-4.0.0-alpha.BUILD_NUMBER.deb` — Native Debian/Ubuntu package (`sudo apt install ./AnkiRideBridge-linux-amd64-4.0.0-alpha.BUILD_NUMBER.deb`)
-          - `AnkiRideBridge-linux-x64-4.0.0-alpha.BUILD_NUMBER-portable.tar.gz` — Universal portable Linux archive
+          - `ClickControl-linux-amd64-4.0.0-alpha.BUILD_NUMBER.deb` — Native Debian/Ubuntu package (`sudo apt install ./ClickControl-linux-amd64-4.0.0-alpha.BUILD_NUMBER.deb`)
+          - `ClickControl-linux-x64-4.0.0-alpha.BUILD_NUMBER-portable.tar.gz` — Universal portable Linux archive
 
           #### macOS (`Apple Silicon arm64`)
-          - `AnkiRideBridge-macos-arm64-4.0.0-alpha.BUILD_NUMBER.dmg` — macOS disk image containing `AnkiRideBridge.app` and `First_Time_Launch_Mac.command`
-          - `AnkiRideBridge-macos-arm64-4.0.0-alpha.BUILD_NUMBER-app.zip` — Portable macOS `.app` archive
-          > *macOS Launch Note*: After dragging to `/Applications`, run `xattr -cr /Applications/AnkiRideBridge.app` or select **Open Anyway** in **System Settings -> Privacy & Security**.
+          - `ClickControl-macos-arm64-4.0.0-alpha.BUILD_NUMBER.dmg` — macOS disk image containing `ClickControl.app` and `First_Time_Launch_Mac.command`
+          - `ClickControl-macos-arm64-4.0.0-alpha.BUILD_NUMBER-app.zip` — Portable macOS `.app` archive
+          > *macOS Launch Note*: After dragging to `/Applications`, run `xattr -cr /Applications/ClickControl.app` or select **Open Anyway** in **System Settings -> Privacy & Security**.
 
           #### Windows (`x64`)
-          - `AnkiRideBridge-windows-x64-4.0.0-alpha.BUILD_NUMBER.msi` — Windows MSI installer
-          - `AnkiRideBridge-windows-x64-4.0.0-alpha.BUILD_NUMBER-setup.exe` — Windows Setup executable
-          - `AnkiRideBridge-windows-x64-4.0.0-alpha.BUILD_NUMBER-portable.zip` — Portable Windows archive
+          - `ClickControl-windows-x64-4.0.0-alpha.BUILD_NUMBER.msi` — Windows MSI installer
+          - `ClickControl-windows-x64-4.0.0-alpha.BUILD_NUMBER-setup.exe` — Windows Setup executable
+          - `ClickControl-windows-x64-4.0.0-alpha.BUILD_NUMBER-portable.zip` — Portable Windows archive
           > *Windows SmartScreen Note*: Click **More info** -> **Run anyway** on first install.
           EOF
 

@@ -39,7 +39,7 @@ fun FloatingHudDesktopWindow(
     Window(
         onCloseRequest = onClose,
         state = windowState,
-        title = "AnkiRide HUD",
+        title = "ClickControl HUD",
         undecorated = true,
         transparent = true,
         alwaysOnTop = true,
@@ -48,6 +48,7 @@ fun FloatingHudDesktopWindow(
     ) {
         val dot = when (bleState) {
             BleConnectionState.CONNECTED_RIGHT_ONLY,
+            BleConnectionState.CONNECTED_LEFT_ONLY,
             BleConnectionState.CONNECTED_BOTH_PODS -> "🟢"
             BleConnectionState.SCANNING,
             BleConnectionState.CONNECTING,
@@ -57,7 +58,7 @@ fun FloatingHudDesktopWindow(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xDD1E293B), RoundedCornerShape(25.dp))
+                .background(Color(0xDD182A33), RoundedCornerShape(25.dp))
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
@@ -70,7 +71,7 @@ fun FloatingHudDesktopWindow(
             )
             Text(
                 text = lastActionText.ifBlank { "Ready" },
-                color = Color(0xFF38BDF8),
+                color = Color(0xFF70D8C8),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium
             )

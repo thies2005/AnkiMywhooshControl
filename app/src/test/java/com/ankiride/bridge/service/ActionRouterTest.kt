@@ -40,6 +40,8 @@ class ActionRouterTest {
     @Test
     fun testRightPodFourColorSplitCombinedModeRouting() = runTest {
         val currentConfig = AppConfiguration(
+            podAssignment = PodAssignment.LEGACY_SHARED,
+            useZForShiftDownInSinglePodMode = false,
             mode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
             rightPodOnlyNoZwift = true
         )
@@ -94,6 +96,8 @@ class ActionRouterTest {
     @Test
     fun testDualPodCombinedModeRouting() = runTest {
         val config = AppConfiguration(
+            podAssignment = PodAssignment.LEGACY_SHARED,
+            useZForShiftDownInSinglePodMode = false,
             mode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
             rightPodOnlyNoZwift = false
         )
@@ -147,7 +151,7 @@ class ActionRouterTest {
 
     @Test
     fun testMode3AnkiOnlyRouting() = runTest {
-        val config = AppConfiguration(mode = OperatingMode.MODE_3_ANKI_ONLY)
+        val config = AppConfiguration(mode = OperatingMode.MODE_3_ANKI_ONLY, podAssignment = PodAssignment.LEGACY_SHARED)
         val router = ActionRouter(
             scope = this,
             configSupplier = { config },
@@ -185,6 +189,8 @@ class ActionRouterTest {
     @Test
     fun testMode4MyWhooshOnlyRouting() = runTest {
         val config = AppConfiguration(
+            podAssignment = PodAssignment.LEGACY_SHARED,
+            useZForShiftDownInSinglePodMode = false,
             mode = OperatingMode.MODE_4_MYWHOOSH_ONLY,
             rightPodOnlyNoZwift = false
         )
@@ -236,6 +242,8 @@ class ActionRouterTest {
             ) to MappedTargetAction.ANKI_FLIP_OR_AGAIN
         )
         val config = AppConfiguration(
+            podAssignment = PodAssignment.LEGACY_SHARED,
+            useZForShiftDownInSinglePodMode = false,
             mode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
             rightPodOnlyNoZwift = true,
             customBindings = customBindings
@@ -266,6 +274,8 @@ class ActionRouterTest {
             ) to MappedTargetAction.MW_CAMERA
         )
         val config = AppConfiguration(
+            podAssignment = PodAssignment.LEGACY_SHARED,
+            useZForShiftDownInSinglePodMode = false,
             mode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
             rightPodOnlyNoZwift = true,
             customBindings = customBindings
@@ -294,6 +304,8 @@ class ActionRouterTest {
             ) to MappedTargetAction.NONE
         )
         val config = AppConfiguration(
+            podAssignment = PodAssignment.LEGACY_SHARED,
+            useZForShiftDownInSinglePodMode = false,
             mode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
             rightPodOnlyNoZwift = true,
             customBindings = customBindings
@@ -327,6 +339,8 @@ class ActionRouterTest {
             ) to MappedTargetAction.ANKI_UNDO
         )
         val config = AppConfiguration(
+            podAssignment = PodAssignment.LEGACY_SHARED,
+            useZForShiftDownInSinglePodMode = false,
             mode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
             rightPodOnlyNoZwift = true,
             customBindings = customBindings
@@ -362,6 +376,8 @@ class ActionRouterTest {
     @Test
     fun testDynamicConfigSupplierUpdatesBindings() = runTest {
         var currentConfig = AppConfiguration(
+            podAssignment = PodAssignment.LEGACY_SHARED,
+            useZForShiftDownInSinglePodMode = false,
             mode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
             rightPodOnlyNoZwift = true
         )
@@ -396,6 +412,8 @@ class ActionRouterTest {
     @Test
     fun testMode5UbuntuAnkiConnectRouting() = runTest {
         val config = AppConfiguration(
+            podAssignment = PodAssignment.LEGACY_SHARED,
+            useZForShiftDownInSinglePodMode = false,
             mode = OperatingMode.MODE_5_UBUNTU_ANKICONNECT,
             rightPodOnlyNoZwift = true
         )
@@ -425,4 +443,39 @@ class ActionRouterTest {
             ankiDispatcher.dispatchedActions
         )
     }
+    @Test
+    fun rightOnlyReservesRightControlsForAnkiAndIgnoresLeft() = runTest {
+        val config = AppConfiguration(podAssignment = PodAssignment.RIGHT_ANKI_ONLY)
+        val router = ActionRouter(scope = this, configSupplier = { config }, ankiDispatcher = ankiDispatcher, myWhooshDispatcher = myWhooshDispatcher)
+        listOf(ClickButton.Y, ClickButton.Z, ClickButton.B, ClickButton.A, ClickButton.SHIFT_UP_RIGHT, ClickButton.SHIFT_DOWN_LEFT).forEach {
+            router.routeGesture(ButtonGestureEvent(it, PressType.SINGLE_CLICK))
+        }
+        router.routeGesture(ButtonGestureEvent(ClickButton.A, PressType.LONG_PRESS))
+        testScheduler.advanceUntilIdle()
+        assertEquals(listOf(AnkiAction.FLIP_OR_AGAIN, AnkiAction.FLIP_OR_HARD, AnkiAction.FLIP_OR_GOOD, AnkiAction.FLIP_OR_GOOD, AnkiAction.FLIP_CARD, AnkiAction.FLIP_OR_EASY), ankiDispatcher.dispatchedActions)
+        assertTrue(myWhooshDispatcher.dispatchedActions.isEmpty())
+    }
+
+    @Test
+    fun dualAssignmentRoutesLeftShiftAliasToBike() = runTest {
+        val config = AppConfiguration(podAssignment = PodAssignment.RIGHT_ANKI_LEFT_BIKE)
+        val router = ActionRouter(scope = this, configSupplier = { config }, ankiDispatcher = ankiDispatcher, myWhooshDispatcher = myWhooshDispatcher)
+        router.routeGesture(ButtonGestureEvent(ClickButton.SHIFT_UP_LEFT, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.SHIFT_DOWN_LEFT, PressType.SINGLE_CLICK))
+        router.routeGesture(ButtonGestureEvent(ClickButton.SHIFT_DOWN_LEFT, PressType.LONG_PRESS))
+        router.routeGesture(ButtonGestureEvent(ClickButton.Z, PressType.SINGLE_CLICK))
+        testScheduler.advanceUntilIdle()
+        assertEquals(listOf(MyWhooshAction.SHIFT_UP, MyWhooshAction.SHIFT_DOWN, MyWhooshAction.SHIFT_UP), myWhooshDispatcher.dispatchedActions)
+        assertEquals(listOf(AnkiAction.FLIP_OR_HARD), ankiDispatcher.dispatchedActions)
+    }
+
+    @Test
+    fun legacySinglePodZOverrideUsesConfiguration() = runTest {
+        val config = AppConfiguration(podAssignment = PodAssignment.LEGACY_SHARED, rightPodOnlyNoZwift = true, useZForShiftDownInSinglePodMode = true)
+        val router = ActionRouter(scope = this, configSupplier = { config }, ankiDispatcher = ankiDispatcher, myWhooshDispatcher = myWhooshDispatcher)
+        router.routeGesture(ButtonGestureEvent(ClickButton.Z, PressType.SINGLE_CLICK))
+        testScheduler.advanceUntilIdle()
+        assertEquals(listOf(MyWhooshAction.SHIFT_DOWN), myWhooshDispatcher.dispatchedActions)
+    }
+
 }

@@ -360,4 +360,30 @@ class AnkiConnectClientTest {
             executor.shutdown()
         }
     }
+    @Test
+    fun failedRecoveryClearsAnswerStateWithWhitespaceInResponse() {
+        val client = AnkiConnectClient().apply { isAnswerVisible = true; lastFlipTimestampMs = 1 }
+        ServerSocket(0).use { server ->
+            val executor = Executors.newSingleThreadExecutor()
+            val task = executor.submit {
+                listOf("{\"result\":\n false, \"error\":\n null}", "{\"result\": false, \"error\": null}").forEach { body ->
+                    server.accept().use { socket ->
+                        val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+                        var line = reader.readLine(); var length = 0
+                        while (!line.isNullOrEmpty()) {
+                            if (line.startsWith("Content-Length:", true)) length = line.substringAfter(":").trim().toInt()
+                            line = reader.readLine()
+                        }
+                        val chars = CharArray(length); var offset = 0
+                        while (offset < length) { val n = reader.read(chars, offset, length - offset); if (n < 0) break; offset += n }
+                        socket.getOutputStream().write("HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n$body".toByteArray())
+                    }
+                }
+            }
+            assertFalse(client.dispatchAnkiConnectAction("127.0.0.1", server.localPort, AnkiAction.FLIP_OR_GOOD, 1000))
+            assertFalse(client.isAnswerVisible)
+            task.get(3, java.util.concurrent.TimeUnit.SECONDS)
+            executor.shutdownNow()
+        }
+    }
 }

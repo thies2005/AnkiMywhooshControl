@@ -27,6 +27,6 @@ test -f app/src/main/java/com/ankiride/bridge/service/FeedbackCueManager.kt
 grep -q "ColorCodedButtonCard" app/src/main/java/com/ankiride/bridge/ui/MainActivity.kt
 
 echo "=== [RG-6] Running Full Unit Test Suite ==="
-./gradlew testDebugUnitTest --no-daemon
+./gradlew :app:testDebugUnitTest :desktop:test --no-daemon
 
-echo "ALL REVIEW & SECURITY GATES (RG-0 .. RG-6) PASSED."
+echo "ALL STATIC GUARDS AND ANDROID / DESKTOP UNIT TESTS PASSED."

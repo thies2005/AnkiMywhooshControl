@@ -45,10 +45,10 @@ compose.desktop {
                 TargetFormat.Msi,
                 TargetFormat.Exe
             )
-            packageName = "AnkiRideBridge"
+            packageName = "ClickControl"
             packageVersion = "4.0.0"
             description = "Zwift Click v2 Bridge for Desktop Anki and MyWhoosh"
-            vendor = "AnkiRide"
+            vendor = "ClickControl"
 
             appResourcesRootDir.set(project.layout.projectDirectory.dir("build/packaged-resources"))
 
@@ -69,7 +69,7 @@ compose.desktop {
 
             windows {
                 shortcut = true
-                menuGroup = "AnkiRide Bridge"
+                menuGroup = "ClickControl"
                 upgradeUuid = "d273f680-d548-419d-b9d1-fa0472345229"
             }
 
@@ -78,9 +78,9 @@ compose.desktop {
                 infoPlist {
                     extraKeysRawXml = """
                         <key>NSBluetoothAlwaysUsageDescription</key>
-                        <string>AnkiRide Bridge connects to your Zwift Click v2 handlebar controller.</string>
+                        <string>ClickControl connects to your Zwift Click v2 handlebar controller.</string>
                         <key>NSLocalNetworkUsageDescription</key>
-                        <string>AnkiRide Bridge advertises OpenBikeControl (_openbikecontrol._tcp) to MyWhoosh.</string>
+                        <string>ClickControl advertises OpenBikeControl (_openbikecontrol._tcp) to MyWhoosh.</string>
                         <key>NSBonjourServices</key>
                         <array>
                             <string>_openbikecontrol._tcp</string>

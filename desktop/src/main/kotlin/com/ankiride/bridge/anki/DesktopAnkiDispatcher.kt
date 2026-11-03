@@ -3,7 +3,7 @@ package com.ankiride.bridge.anki
 import com.ankiride.bridge.core.AnkiAction
 import com.ankiride.bridge.core.AnkiActionDispatcher
 import com.ankiride.bridge.core.AppConfiguration
-import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
@@ -15,8 +15,7 @@ class DesktopAnkiDispatcher(
         1,
         0L,
         TimeUnit.MILLISECONDS,
-        ArrayBlockingQueue(1),
-        ThreadPoolExecutor.DiscardOldestPolicy()
+        LinkedBlockingQueue()
     )
 ) : AnkiActionDispatcher {
 

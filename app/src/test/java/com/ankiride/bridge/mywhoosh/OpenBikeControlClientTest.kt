@@ -15,6 +15,28 @@ import java.net.Socket
 class OpenBikeControlClientTest {
 
     @Test
+    fun stopBeforeScheduledStartPreventsLateBind() {
+        val scheduler = kotlinx.coroutines.test.TestCoroutineScheduler()
+        val workerScope = kotlinx.coroutines.CoroutineScope(
+            kotlinx.coroutines.test.StandardTestDispatcher(scheduler) + kotlinx.coroutines.SupervisorJob()
+        )
+        val server = OpenBikeControlClient(scope = workerScope)
+        repeat(3) {
+            server.startServer(0, bindLocalhostOnly = true)
+            val jobField = server.javaClass.getDeclaredField("acceptJob").apply { isAccessible = true }
+            val firstJob = jobField.get(server)
+            server.startServer(0, bindLocalhostOnly = true)
+            org.junit.Assert.assertSame(firstJob, jobField.get(server))
+            server.stopServer()
+        }
+        scheduler.runCurrent()
+        val socketField = server.javaClass.getDeclaredField("serverSocket").apply { isAccessible = true }
+        org.junit.Assert.assertNull(socketField.get(server))
+        assertFalse(server.hasConnectedClients())
+        workerScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+    }
+
+    @Test
     fun testActionOpcodes() {
         assertEquals(0x01.toByte(), MyWhooshAction.SHIFT_UP.openBikeOpcode)
         assertEquals(0x02.toByte(), MyWhooshAction.SHIFT_DOWN.openBikeOpcode)

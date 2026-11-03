@@ -23,7 +23,7 @@ class OpenBikeControlClient(
         const val MAX_CONNECTED_CLIENTS = 4
         const val CLIENT_SO_TIMEOUT_MS = 60_000
         const val SERVICE_TYPE = "_openbikecontrol._tcp."
-        const val SERVICE_NAME = "AnkiRideBridge"
+        const val SERVICE_NAME = "ClickControl"
         const val OPENBIKE_BLE_SERVICE_UUID = "d273f680-d548-419d-b9d1-fa0472345229"
         const val MSG_BUTTON_STATE: Byte = 0x01
         const val MSG_DEVICE_STATUS: Byte = 0x02
@@ -34,7 +34,9 @@ class OpenBikeControlClient(
         const val PRESS_HOLD_MS = 90L
     }
 
-    private var serverSocket: ServerSocket? = null
+    private val lifecycleLock = Any()
+    private var serverGeneration = 0L
+    @Volatile private var serverSocket: ServerSocket? = null
     private var acceptJob: Job? = null
     val connectedClients = CopyOnWriteArrayList<Socket>()
 
@@ -49,53 +51,75 @@ class OpenBikeControlClient(
     fun hasConnectedClients(): Boolean = connectedClientCount() > 0
 
     fun startServer(port: Int = DEFAULT_PORT, bindLocalhostOnly: Boolean = false) {
-        if (serverSocket != null) return
-        acceptJob = scope.launch(Dispatchers.IO) {
-            try {
-                val bindAddr = if (bindLocalhostOnly) {
-                    InetAddress.getByName("127.0.0.1")
-                } else {
-                    InetAddress.getByName("0.0.0.0")
-                }
-                val srv = ServerSocket(port, 50, bindAddr)
-                serverSocket = srv
-                DiagnosticLogger.info(
-                    LogCategory.MYWHOOSH,
-                    "OpenBikeControl TCP Server listening on port ${srv.localPort}"
-                )
-                mdnsAdvertiser.registerOpenBikeService(srv.localPort)
-
-                while (isActive && !srv.isClosed) {
-                    val client = srv.accept()
-                    val rawHost = client.inetAddress?.hostAddress ?: ""
-                    if (LanAddressValidator.isLocalOrLanAddress(rawHost)) {
-                        client.tcpNoDelay = true
-                        client.soTimeout = CLIENT_SO_TIMEOUT_MS
-                        connectedClients.removeIf { it.isClosed || !it.isConnected }
-                        while (connectedClients.size >= MAX_CONNECTED_CLIENTS) {
-                            val oldest = if (connectedClients.isNotEmpty()) connectedClients.removeAt(0) else break
-                            try {
-                                oldest.close()
-                            } catch (_: Exception) {
-                            }
-                        }
-                        connectedClients.add(client)
-                        _connectedClientCountFlow.value = connectedClients.size
+        synchronized(lifecycleLock) {
+            if (acceptJob?.isActive == true || serverSocket != null) return
+            val generation = ++serverGeneration
+            acceptJob = scope.launch {
+                var ownedSocket: ServerSocket? = null
+                try {
+                    val bindAddr = if (bindLocalhostOnly) {
+                        InetAddress.getByName("127.0.0.1")
+                    } else {
+                        InetAddress.getByName("0.0.0.0")
+                    }
+                    val srv = ServerSocket(port, 50, bindAddr)
+                    ownedSocket = srv
+                    synchronized(lifecycleLock) {
+                        if (generation != serverGeneration || !isActive) return@launch
+                        serverSocket = srv
                         DiagnosticLogger.info(
                             LogCategory.MYWHOOSH,
-                            "MyWhoosh connected from $rawHost (tcpNoDelay=true, clients=${connectedClients.size})"
+                            "OpenBikeControl TCP Server listening on port ${srv.localPort}"
                         )
-                        // Send initial OpenBikeControl 0x02 Device Status (100% battery, connected = 1)
-                        sendRawBytes(client, byteArrayOf(MSG_DEVICE_STATUS, 0x64, 0x01))
-                        listenToClientMessages(client, rawHost)
-                    } else {
-                        DiagnosticLogger.warn(LogCategory.MYWHOOSH, "Rejected non-LAN socket from $rawHost")
-                        client.close()
+                        mdnsAdvertiser.registerOpenBikeService(srv.localPort)
                     }
-                }
-            } catch (e: Exception) {
-                if (isActive) {
-                    DiagnosticLogger.error(LogCategory.MYWHOOSH, "OpenBikeControl server error: ${e.message}")
+
+                    while (isActive && !srv.isClosed) {
+                        val client = srv.accept()
+                        synchronized(lifecycleLock) {
+                            if (generation != serverGeneration || !isActive) {
+                                client.close()
+                                return@launch
+                            }
+                            val rawHost = client.inetAddress?.hostAddress ?: ""
+                            if (LanAddressValidator.isLocalOrLanAddress(rawHost)) {
+                                client.tcpNoDelay = true
+                                client.soTimeout = CLIENT_SO_TIMEOUT_MS
+                                connectedClients.removeIf { it.isClosed || !it.isConnected }
+                                while (connectedClients.size >= MAX_CONNECTED_CLIENTS) {
+                                    val oldest = if (connectedClients.isNotEmpty()) connectedClients.removeAt(0) else break
+                                    try {
+                                        oldest.close()
+                                    } catch (_: Exception) {
+                                    }
+                                }
+                                connectedClients.add(client)
+                                _connectedClientCountFlow.value = connectedClients.size
+                                DiagnosticLogger.info(
+                                    LogCategory.MYWHOOSH,
+                                    "MyWhoosh connected from $rawHost (tcpNoDelay=true, clients=${connectedClients.size})"
+                                )
+                                // Send initial OpenBikeControl 0x02 Device Status (100% battery, connected = 1)
+                                sendRawBytes(client, byteArrayOf(MSG_DEVICE_STATUS, 0x64, 0x01))
+                                listenToClientMessages(client, rawHost)
+                            } else {
+                                DiagnosticLogger.warn(LogCategory.MYWHOOSH, "Rejected non-LAN socket from $rawHost")
+                                client.close()
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (isActive) {
+                        DiagnosticLogger.error(LogCategory.MYWHOOSH, "OpenBikeControl server error: ${e.message}")
+                    }
+                } finally {
+                    runCatching { ownedSocket?.close() }
+                    synchronized(lifecycleLock) {
+                        if (generation == serverGeneration) {
+                            serverSocket = null
+                            mdnsAdvertiser.unregister()
+                        }
+                    }
                 }
             }
         }
@@ -132,6 +156,7 @@ class OpenBikeControlClient(
                 }
             } catch (_: Exception) {
             } finally {
+                runCatching { client.close() }
                 connectedClients.remove(client)
                 _connectedClientCountFlow.value = connectedClients.size
                 if (connectedClients.isEmpty()) {
@@ -243,26 +268,29 @@ class OpenBikeControlClient(
     }
 
     fun stopServer() {
-        acceptJob?.cancel()
-        acceptJob = null
+        synchronized(lifecycleLock) {
+            ++serverGeneration
+            acceptJob?.cancel()
+            acceptJob = null
 
-        mdnsAdvertiser.unregister()
+            mdnsAdvertiser.unregister()
 
-        connectedClients.forEach {
+            connectedClients.forEach {
+                try {
+                    it.close()
+                } catch (_: Exception) {
+                }
+            }
+            connectedClients.clear()
+            _connectedClientCountFlow.value = 0
+            _connectedAppInfo.value = null
+
             try {
-                it.close()
+                serverSocket?.close()
             } catch (_: Exception) {
             }
+            serverSocket = null
         }
-        connectedClients.clear()
-        _connectedClientCountFlow.value = 0
-        _connectedAppInfo.value = null
-
-        try {
-            serverSocket?.close()
-        } catch (_: Exception) {
-        }
-        serverSocket = null
     }
 
     fun close() {

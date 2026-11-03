@@ -26,6 +26,8 @@ enum class OperatingMode(val shortTitle: String, val subtitle: String) {
     )
 }
 
+enum class PodAssignment { LEGACY_SHARED, RIGHT_ANKI_LEFT_BIKE, RIGHT_ANKI_ONLY }
+
 enum class BleConnectionState {
     DISCONNECTED,
     SCANNING,
@@ -67,8 +69,8 @@ enum class ClickButton(
 
     val canonicalButton: ClickButton
         get() = when (this) {
-            SHIFT_UP_RIGHT_ALT, SHIFT_UP_LEFT, POWERUP_RIGHT, ONOFF_RIGHT -> SHIFT_UP_RIGHT
-            SHIFT_DOWN_LEFT_ALT, SHIFT_DOWN_RIGHT, POWERUP_LEFT, ONOFF_LEFT -> SHIFT_DOWN_LEFT
+            SHIFT_UP_RIGHT_ALT, POWERUP_RIGHT, ONOFF_RIGHT -> SHIFT_UP_RIGHT
+            SHIFT_DOWN_LEFT_ALT, POWERUP_LEFT, ONOFF_LEFT -> SHIFT_DOWN_LEFT
             else -> this
         }
 
@@ -151,8 +153,21 @@ data class ModeButtonBindingKey(
     val pressType: PressType
 )
 
+enum class AnkiTarget { ANKIDROID, ANKICONNECT }
+
+data class PresetBindingKey(val button: ClickButton, val pressType: PressType)
+data class MappingPreset(
+    val id: String,
+    val name: String,
+    val ankiTarget: AnkiTarget,
+    val bindings: Map<PresetBindingKey, MappedTargetAction>
+)
+
 data class AppConfiguration(
+    val presets: List<MappingPreset> = emptyList(),
+    val activePresetId: String? = null,
     val mode: OperatingMode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
+    val podAssignment: PodAssignment = PodAssignment.RIGHT_ANKI_ONLY,
     val rightPodOnlyNoZwift: Boolean = true,
     val useZForShiftDownInSinglePodMode: Boolean = true,
     val autoStartOnControllerWake: Boolean = true,

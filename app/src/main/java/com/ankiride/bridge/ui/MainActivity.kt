@@ -13,6 +13,8 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -25,6 +27,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -62,7 +67,7 @@ class MainActivity : ComponentActivity() {
         requestBlePermissions()
 
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            MaterialTheme(colorScheme = ClickControlColors) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -151,395 +156,116 @@ fun AnkiRideDashboard(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-
     val isRunning by BridgeForegroundService.isRunningFlow.collectAsState()
     val bleState by BridgeForegroundService.connectionStateFlow.collectAsState()
-    val a11yServiceConnected by BridgeAccessibilityService.isConnectedFlow.collectAsState()
-    val lastRightMac by ZwiftBleController.lastRightMac.collectAsState()
-    val lastLeftMac by ZwiftBleController.lastLeftMac.collectAsState()
-
-    val initialConfig = remember { ButtonMappingStore.loadFullConfiguration(context) }
-    var selectedMode by remember { mutableStateOf(initialConfig.mode) }
-    var rightPodOnly by remember { mutableStateOf(initialConfig.rightPodOnlyNoZwift) }
-    var useZForShiftDown by remember { mutableStateOf(initialConfig.useZForShiftDownInSinglePodMode) }
-    var useTouchFallback by remember { mutableStateOf(initialConfig.useMyShiftTouchFallbackWhenNoClient) }
-    var floatingHudEnabled by remember { mutableStateOf(initialConfig.floatingHudPillEnabled) }
-    var hapticEnabled by remember { mutableStateOf(initialConfig.hapticFeedbackEnabled) }
-    var audioEnabled by remember { mutableStateOf(initialConfig.audioFeedbackEnabled) }
-    var ubuntuHost by remember { mutableStateOf(initialConfig.ubuntuAnkiConnectHost) }
-    var ubuntuPortText by remember { mutableStateOf(initialConfig.ubuntuAnkiConnectPort.toString()) }
-    var lockToConnectedPods by remember { mutableStateOf(false) }
-    var customBindings by remember { mutableStateOf(initialConfig.customBindings) }
-
-    // Reactive permission states updated on ON_RESUME and when service state changes
+    val a11yConnected by BridgeAccessibilityService.isConnectedFlow.collectAsState()
+    val rightMac by ZwiftBleController.lastRightMac.collectAsState()
+    val leftMac by ZwiftBleController.lastLeftMac.collectAsState()
+    var config by remember { mutableStateOf(ButtonMappingStore.loadFullConfiguration(context)) }
+    var page by rememberSaveable { mutableStateOf(0) }
+    var presetDirty by rememberSaveable { mutableStateOf(false) }
+    var pendingPage by remember { mutableStateOf<Int?>(null) }
+    fun navigate(next: Int) { if (page == 1 && next != 1 && presetDirty) pendingPage = next else page = next }
+    BackHandler(enabled = page != 0) { navigate(0) }
+    var advanced by remember { mutableStateOf(false) }
+    var portText by remember { mutableStateOf(config.ubuntuAnkiConnectPort.toString()) }
+    var showMappings by remember { mutableStateOf(false) }
+    val discovered by ZwiftBleController.discoveredAddresses.collectAsState()
+    val activePreset = PresetStore.active(config)
+    val accessibilityRequired = activePreset?.ankiTarget == AnkiTarget.ANKIDROID ||
+        (config.useMyShiftTouchFallbackWhenNoClient && activePreset?.bindings?.values?.any { it.myWhooshAction != null } == true)
     var a11yEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled(context)) }
     var batteryExempt by remember { mutableStateOf(isBatteryOptimizationExempt(context)) }
     var bleGranted by remember { mutableStateOf(areBlePermissionsGranted(context)) }
-
-    LaunchedEffect(a11yServiceConnected, permissionRefreshCount) {
-        a11yEnabled = isAccessibilityServiceEnabled(context)
-        batteryExempt = isBatteryOptimizationExempt(context)
-        bleGranted = areBlePermissionsGranted(context)
-    }
-
+    fun refresh() { a11yEnabled = isAccessibilityServiceEnabled(context); batteryExempt = isBatteryOptimizationExempt(context); bleGranted = areBlePermissionsGranted(context) }
+    LaunchedEffect(a11yConnected, permissionRefreshCount) { refresh() }
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                a11yEnabled = isAccessibilityServiceEnabled(context)
-                batteryExempt = isBatteryOptimizationExempt(context)
-                bleGranted = areBlePermissionsGranted(context)
-                DiagnosticLogger.info(
-                    LogCategory.PERMS,
-                    "ON_RESUME permission check: A11y=$a11yEnabled, BatteryExempt=$batteryExempt, BLE=$bleGranted"
-                )
-            }
-        }
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) refresh() }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-
-    fun buildCurrentConfig(): AppConfiguration {
-        val port = ubuntuPortText.toIntOrNull() ?: 8765
-        return AppConfiguration(
-            mode = selectedMode,
-            rightPodOnlyNoZwift = rightPodOnly,
-            useZForShiftDownInSinglePodMode = useZForShiftDown,
-            useMyShiftTouchFallbackWhenNoClient = useTouchFallback,
-            floatingHudPillEnabled = floatingHudEnabled,
-            hapticFeedbackEnabled = hapticEnabled,
-            audioFeedbackEnabled = audioEnabled,
-            ubuntuAnkiConnectHost = ubuntuHost.trim(),
-            ubuntuAnkiConnectPort = port,
-            pinnedRightPodMac = if (lockToConnectedPods) lastRightMac else null,
-            pinnedLeftPodMac = if (lockToConnectedPods) lastLeftMac else null,
-            customBindings = customBindings
-        )
+    LaunchedEffect(config) {
+        ButtonMappingStore.saveFullConfiguration(context, config)
+        if (isRunning) BridgeForegroundService.startService(context, config)
     }
-
-    // Keep live service config synced and persisted when toggles or custom bindings change
-    LaunchedEffect(
-        selectedMode,
-        rightPodOnly,
-        useZForShiftDown,
-        useTouchFallback,
-        floatingHudEnabled,
-        hapticEnabled,
-        audioEnabled,
-        ubuntuHost,
-        ubuntuPortText,
-        lockToConnectedPods,
-        customBindings
-    ) {
-        val cfg = buildCurrentConfig()
-        ButtonMappingStore.saveFullConfiguration(context, cfg)
-        if (isRunning) {
-            BridgeForegroundService.startService(context, cfg)
+    LaunchedEffect(bleState, config.mode, config.floatingHudPillEnabled) {
+        FloatingHudPill.syncVisibility(BridgeAccessibilityService.activeInstance, config.floatingHudPillEnabled, bleState, config.mode)
+    }
+    Scaffold(bottomBar = {
+        NavigationBar {
+            listOf("Control", "Presets", "Settings").forEachIndexed { index, label ->
+                NavigationBarItem(selected = page == index, onClick = { navigate(index) }, icon = { Icon(listOf(Icons.Default.Home, Icons.Default.Tune, Icons.Default.Settings)[index], contentDescription = null) }, label = { Text(label) })
+            }
         }
-    }
-
-    LaunchedEffect(bleState, selectedMode, floatingHudEnabled) {
-        com.ankiride.bridge.ui.FloatingHudPill.syncVisibility(
-            service = BridgeAccessibilityService.activeInstance,
-            enabled = floatingHudEnabled,
-            bleState = bleState,
-            mode = selectedMode
-        )
-    }
-
-    val scrollState = rememberScrollState()
-
-    Scaffold { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp)
-                .verticalScroll(scrollState),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text(
-                text = "AnkiRide Bridge",
-                fontSize = 26.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                text = "100% Standalone OpenBikeControl Server + AnkiDroid Reviewer (No BikeControl or Zwift App Needed)",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            // 1. Permissions Checklist (Auto-collapses when all 3 are granted!)
-            PermissionsChecklistCard(
-                a11yEnabled = a11yEnabled,
-                batteryExempt = batteryExempt,
-                bleGranted = bleGranted,
-                onRequestPermissions = onRequestPermissions,
-                onOpenAccessibility = onOpenAccessibility,
-                onOpenBatteryOpt = onOpenBatteryOpt
-            )
-
-            // 2. Connection Status Card
-            ConnectionStatusCard(
-                bleState = bleState,
-                isRunning = isRunning,
-                lastRightMac = lastRightMac,
-                lastLeftMac = lastLeftMac,
-                onToggleService = {
-                    if (isRunning) {
-                        BridgeForegroundService.stopService(context)
-                    } else {
-                        BridgeForegroundService.startService(context, buildCurrentConfig())
+    }) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("ClickControl", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+            when (page) {
+                0 -> {
+                    Text("Controller", style = MaterialTheme.typography.titleLarge)
+                    ConnectionStatusCard(bleState, isRunning, rightMac, leftMac) {
+                        if (isRunning) BridgeForegroundService.stopService(context)
+                        else if (!bleGranted) onRequestPermissions()
+                        else BridgeForegroundService.startService(context, config)
+                    }
+                    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Active preset", style = MaterialTheme.typography.titleMedium)
+                        Text(PresetStore.active(config)?.name ?: "Default")
+                        OutlinedButton(onClick = { navigate(1) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Edit preset") }
+                    } }
+                    OutlinedButton(onClick = { showMappings = !showMappings }, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (showMappings) "Hide mappings" else "View mappings") }
+                    if (showMappings) MappingOverview(config)
+                    if (!bleGranted || !batteryExempt || (accessibilityRequired && !a11yEnabled)) Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Setup needs attention", style = MaterialTheme.typography.titleMedium)
+                            Text("Review the permissions needed for your controls.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            OutlinedButton(onClick = { navigate(2) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Review setup") }
+                        }
                     }
                 }
-            )
-
-            // 3. Operating Mode Selector
-            Text(
-                text = "Operating Mode",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-            ModeSelector(
-                selectedMode = selectedMode,
-                onModeSelected = { selectedMode = it }
-            )
-
-            if (selectedMode == OperatingMode.MODE_5_UBUNTU_ANKICONNECT) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            text = "Ubuntu Desktop Anki (AnkiConnect Port 8765)",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                        Text(
-                            text = "In Desktop Anki -> Tools -> Add-ons -> AnkiConnect -> Config, set webBindAddress to 0.0.0.0 and restart Anki.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedTextField(
-                                value = ubuntuHost,
-                                onValueChange = { ubuntuHost = it },
-                                label = { Text("Ubuntu LAN IPv4 (e.g. 192.168.1.50)") },
-                                modifier = Modifier.weight(1f)
-                            )
-                            OutlinedTextField(
-                                value = ubuntuPortText,
-                                onValueChange = { ubuntuPortText = it.filter { ch -> ch.isDigit() } },
-                                label = { Text("Port") },
-                                modifier = Modifier.width(96.dp)
-                            )
+                1 -> PresetEditor(config, { config = it }, allowAnkiDroid = true, onDirtyChanged = { presetDirty = it })
+                else -> {
+                    Text("Settings", style = MaterialTheme.typography.headlineSmall)
+                    PermissionsChecklistCard(a11yEnabled, batteryExempt, bleGranted, onRequestPermissions, onOpenAccessibility, onOpenBatteryOpt, accessibilityRequired)
+                    Text("Controller connection", style = MaterialTheme.typography.titleMedium)
+                    listOf(false to "Right controller only", true to "Both controllers").forEach { (both, label) ->
+                        val selected = if (both) (config.podAssignment == PodAssignment.RIGHT_ANKI_LEFT_BIKE || config.podAssignment == PodAssignment.LEGACY_SHARED && !config.rightPodOnlyNoZwift) else (config.podAssignment == PodAssignment.RIGHT_ANKI_ONLY || config.podAssignment == PodAssignment.LEGACY_SHARED && config.rightPodOnlyNoZwift)
+                        val select = { if (!selected) config = config.copy(podAssignment = if (both) PodAssignment.RIGHT_ANKI_LEFT_BIKE else PodAssignment.RIGHT_ANKI_ONLY, rightPodOnlyNoZwift = !both) }
+                        Row(Modifier.fillMaxWidth().clickable(onClick = select).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = selected, onClick = select); Text(label)
                         }
-                        OutlinedButton(
-                            onClick = {
-                                val port = ubuntuPortText.toIntOrNull() ?: 8765
-                                val client = com.ankiride.bridge.anki.AnkiConnectClient()
-                                Thread {
-                                    val ok = client.dispatchAnkiConnectAction(
-                                        host = ubuntuHost.trim(),
-                                        port = port,
-                                        action = AnkiAction.FLIP_CARD
-                                    )
-                                    DiagnosticLogger.info(
-                                        LogCategory.ANKI,
-                                        "Test Ubuntu Anki Flip -> ${if (ok) "Success (guiShowAnswer)" else "Failed (check LAN IP/port)"}"
-                                    )
-                                }.start()
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Test Ubuntu Anki Flip (guiShowAnswer)")
+                    }
+                    Text("MyWhoosh location", style = MaterialTheme.typography.titleMedium)
+                    listOf(OperatingMode.MODE_1_TABLET_SPLIT_SCREEN to "On this device", OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH to "On another device").forEach { (mode, label) ->
+                        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) { RadioButton(selected = config.mode == mode || (mode == OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH && config.mode == OperatingMode.MODE_5_UBUNTU_ANKICONNECT) || (mode == OperatingMode.MODE_1_TABLET_SPLIT_SCREEN && config.mode == OperatingMode.MODE_4_MYWHOOSH_ONLY), onClick = { config = config.copy(mode = mode) }); Text(label) }
+                    }
+                    Text("Laptop Anki connection", style = MaterialTheme.typography.titleMedium)
+                    OutlinedTextField(config.ubuntuAnkiConnectHost, { config = config.copy(ubuntuAnkiConnectHost = it) }, label = { Text("Host address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(portText, { portText = it.filter(Char::isDigit); portText.toIntOrNull()?.takeIf { port -> port in 1..65535 }?.let { port -> config = config.copy(ubuntuAnkiConnectPort = port) } }, label = { Text("Port") }, isError = portText.toIntOrNull() !in 1..65535, supportingText = { if (portText.toIntOrNull() !in 1..65535) Text("Enter a port from 1 to 65535") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedButton(onClick = { advanced = !advanced }, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (advanced) "Hide advanced settings" else "Advanced settings") }
+                    if (advanced) {
+                        Text("Controller addresses", style = MaterialTheme.typography.titleMedium)
+                        Text("Discovered: ${discovered.joinToString().ifBlank { "none yet" }}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(config.pinnedRightPodMac.orEmpty(), { config = config.copy(pinnedRightPodMac = it.ifBlank { null }) }, label = { Text("Right controller address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(config.pinnedLeftPodMac.orEmpty(), { config = config.copy(pinnedLeftPodMac = it.ifBlank { null }) }, label = { Text("Left controller address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        listOf(Triple("Auto-start on wake", config.autoStartOnControllerWake, { b: Boolean -> config = config.copy(autoStartOnControllerWake = b) }), Triple("Floating status", config.floatingHudPillEnabled, { b: Boolean -> config = config.copy(floatingHudPillEnabled = b) }), Triple("Haptic feedback", config.hapticFeedbackEnabled, { b: Boolean -> config = config.copy(hapticFeedbackEnabled = b) }), Triple("Audio feedback", config.audioFeedbackEnabled, { b: Boolean -> config = config.copy(audioFeedbackEnabled = b) }), Triple("Touch fallback", config.useMyShiftTouchFallbackWhenNoClient, { b: Boolean -> config = config.copy(useMyShiftTouchFallbackWhenNoClient = b) })).forEach { (label, checked, change) ->
+                            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text(label); Switch(checked, change) }
                         }
+                        OutlinedButton(onClick = { BridgeAccessibilityService.activeInstance?.let { com.ankiride.bridge.mywhoosh.MyShiftOverlayCalibrator.showCalibrationOverlay(it, config.mode) } }, enabled = a11yEnabled, modifier = Modifier.heightIn(min = 48.dp)) { Text("Calibrate touch fallback") }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { BridgeForegroundService.triggerTestShift(MyWhooshAction.SHIFT_DOWN) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Test shift down") }
+                            OutlinedButton(onClick = { BridgeForegroundService.triggerTestShift(MyWhooshAction.SHIFT_UP) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Test shift up") }
+                        }
+                        DiagnosticLogCard()
                     }
                 }
             }
-
-            // 4. Hardware & Shifting Behavior (No manual MAC typing needed)
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(
-                        text = "Hardware & Shifting Options",
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "1-Controller Default (Right Pod Only)", fontWeight = FontWeight.Medium)
-                            Text(
-                                text = "Zero 24h sleep lock; switch off to use both Left & Right pods",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = rightPodOnly,
-                            onCheckedChange = { rightPodOnly = it }
-                        )
-                    }
-
-                    if (rightPodOnly) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(text = "Top Z Button Shifts Down", fontWeight = FontWeight.Medium)
-                                Text(
-                                    text = "Instant shifting: '+' = Shift Up, 'Z' = Shift Down, Y/B/A = Anki",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = useZForShiftDown,
-                                onCheckedChange = { useZForShiftDown = it }
-                            )
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "MyShift Touch Tap Fallback", fontWeight = FontWeight.Medium)
-                            Text(
-                                text = "Taps MyWhoosh screen arrows if OpenBikeControl icon isn't paired",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = useTouchFallback,
-                            onCheckedChange = { useTouchFallback = it }
-                        )
-                    }
-
-                    // Feature 1: Optional Floating Mini HUD Pill (Off by Default)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Floating Mini HUD Pill (Optional)", fontWeight = FontWeight.Medium)
-                            Text(
-                                text = "Off by default. Shows draggable mini status, due cards & last action over Split-Screen",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = floatingHudEnabled,
-                            onCheckedChange = {
-                                floatingHudEnabled = it
-                                com.ankiride.bridge.ui.FloatingHudPill.syncVisibility(
-                                    service = BridgeAccessibilityService.activeInstance,
-                                    enabled = it,
-                                    bleState = bleState,
-                                    mode = selectedMode
-                                )
-                            }
-                        )
-                    }
-
-                    // Feature 2A: Optional Haptic Vibration Cues (Off by Default)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Haptic Vibration Cues (Optional)", fontWeight = FontWeight.Medium)
-                            Text(
-                                text = "Off by default. Distinct vibration ticks for Shift Up, Shift Down, Anki Good & Again",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = hapticEnabled,
-                            onCheckedChange = { hapticEnabled = it }
-                        )
-                    }
-
-                    // Feature 2B: Optional Audio Beep/Tick Cues (Off by Default)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Audio Beep/Tick Cues (Optional)", fontWeight = FontWeight.Medium)
-                            Text(
-                                text = "Off by default. Subtle audio confirmation tones when shifting or grading cards",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = audioEnabled,
-                            onCheckedChange = { audioEnabled = it }
-                        )
-                    }
-
-                    if (lastRightMac != null || lastLeftMac != null) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(text = "Lock to Connected Controller", fontWeight = FontWeight.Medium)
-                                Text(
-                                    text = "Pin MAC (${lastRightMac ?: lastLeftMac}) so nearby controllers are ignored",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = lockToConnectedPods,
-                                onCheckedChange = { lockToConnectedPods = it }
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 5. Custom Button Mapping Editor
-            CustomButtonMappingCard(
-                activeMode = selectedMode,
-                rightPodOnly = rightPodOnly,
-                customBindings = customBindings,
-                onUpdateBindings = { updated ->
-                    customBindings = updated
-                    ButtonMappingStore.saveBindings(context, updated)
-                }
-            )
-
-            // 6. Detailed Live Diagnostic Log Card with Copy, Clear & Window Inspector
-            DiagnosticLogCard()
         }
     }
+    if (pendingPage != null) AlertDialog(onDismissRequest = { pendingPage = null }, title = { Text("Discard unsaved changes?") }, text = { Text("Save your preset before leaving, or discard the changes.") }, confirmButton = { TextButton(onClick = { page = pendingPage ?: page; presetDirty = false; pendingPage = null }) { Text("Discard") } }, dismissButton = { TextButton(onClick = { pendingPage = null }) { Text("Keep editing") } })
+
 }
+
 
 @Composable
 fun PermissionsChecklistCard(
@@ -548,9 +274,10 @@ fun PermissionsChecklistCard(
     bleGranted: Boolean,
     onRequestPermissions: () -> Unit,
     onOpenAccessibility: () -> Unit,
-    onOpenBatteryOpt: () -> Unit
+    onOpenBatteryOpt: () -> Unit,
+    a11yRequired: Boolean = true
 ) {
-    val allReady = a11yEnabled && batteryExempt && bleGranted
+    val allReady = (!a11yRequired || a11yEnabled) && batteryExempt && bleGranted
     var expandedWhenReady by remember { mutableStateOf(false) }
 
     if (allReady && !expandedWhenReady) {
@@ -558,7 +285,7 @@ fun PermissionsChecklistCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable { expandedWhenReady = true },
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF1B5E20))
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
         ) {
             Row(
                 modifier = Modifier
@@ -567,15 +294,15 @@ fun PermissionsChecklistCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = Icons.Default.CheckCircle,
                         contentDescription = null,
-                        tint = Color(0xFFA5D6A7)
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "All System Permissions Active (Accessibility, Battery & BLE)",
+                        text = "Setup Ready",
                         color = Color.White,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp
@@ -583,7 +310,7 @@ fun PermissionsChecklistCard(
                 }
                 Text(
                     text = "Show",
-                    color = Color(0xFFA5D6A7),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
                     fontSize = 12.sp
                 )
             }
@@ -625,15 +352,15 @@ fun PermissionsChecklistCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = if (a11yEnabled) Icons.Default.CheckCircle else Icons.Default.Warning,
                         contentDescription = null,
-                        tint = if (a11yEnabled) Color(0xFF4CAF50) else Color(0xFFFFA000)
+                        tint = if (a11yEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (a11yEnabled) "Accessibility Service (Active)" else "Accessibility Service (Required)",
+                        text = if (a11yEnabled) "Accessibility Service (Active)" else if (a11yRequired) "Accessibility Service (Required)" else "Accessibility (optional for laptop Anki)",
                         fontSize = 14.sp
                     )
                 }
@@ -648,11 +375,11 @@ fun PermissionsChecklistCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = if (batteryExempt) Icons.Default.CheckCircle else Icons.Default.Warning,
                         contentDescription = null,
-                        tint = if (batteryExempt) Color(0xFF4CAF50) else Color(0xFFFFA000)
+                        tint = if (batteryExempt) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
@@ -671,11 +398,11 @@ fun PermissionsChecklistCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = if (bleGranted) Icons.Default.CheckCircle else Icons.Default.Warning,
                         contentDescription = null,
-                        tint = if (bleGranted) Color(0xFF4CAF50) else Color(0xFFFFA000)
+                        tint = if (bleGranted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
@@ -730,7 +457,8 @@ fun ConnectionStatusCard(
                 Button(
                     onClick = onToggleService,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isRunning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                        containerColor = if (isRunning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        contentColor = if (isRunning) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary
                     )
                 ) {
                     Text(if (isRunning) "Stop Bridge" else "Start Bridge")
@@ -769,7 +497,7 @@ fun PodBadge(label: String, connected: Boolean) {
     Box(
         modifier = Modifier
             .background(
-                color = if (connected) Color(0xFF2E7D32) else Color(0xFF616161),
+                color = if (connected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(12.dp)
             )
             .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -1102,7 +830,7 @@ fun DiagnosticLogCard() {
                     onClick = {
                         val text = DiagnosticLogger.formatForClipboard(selectedCategory)
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                        clipboard?.setPrimaryClip(ClipData.newPlainText("AnkiRide Diagnostic Log", text))
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("ClickControl Diagnostic Log", text))
                         Toast.makeText(context, "Copied ${filteredLogs.size} log lines to clipboard", Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.weight(1f)

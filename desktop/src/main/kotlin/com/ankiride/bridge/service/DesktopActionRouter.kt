@@ -21,13 +21,13 @@ class DesktopActionRouter(
 
     fun routeGesture(event: ButtonGestureEvent) {
         val config = configSupplier()
-        val target = ButtonMappingStore.resolveAction(
+        val target = PresetStore.resolve(config, event.button, event.type) ?: if (config.podAssignment != PodAssignment.LEGACY_SHARED) ButtonMappingStore.assignedAction(config.podAssignment, event.button, event.type) else ButtonMappingStore.resolveAction(
             mode = config.mode,
             button = event.button,
             pressType = event.type,
             customBindings = config.customBindings,
             rightPodOnlyNoZwift = config.rightPodOnlyNoZwift,
-            useZForShiftDownInSinglePodMode = false
+            useZForShiftDownInSinglePodMode = config.useZForShiftDownInSinglePodMode
         )
 
         _lastRoutedActionLabel.value = target.label

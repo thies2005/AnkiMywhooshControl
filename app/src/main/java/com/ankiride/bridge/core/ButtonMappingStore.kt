@@ -7,6 +7,9 @@ object ButtonMappingStore {
     private const val PREFS_BINDINGS = "ankiride_per_mode_bindings_v4"
     private const val PREFS_SETTINGS = "ankiride_app_settings_v4"
 
+    private const val KEY_ASSIGNMENT = "pod_assignment"
+    private const val KEY_RIGHT_PIN = "pinned_right_pod_mac"
+    private const val KEY_LEFT_PIN = "pinned_left_pod_mac"
     private const val KEY_MODE = "operating_mode"
     private const val KEY_RIGHT_POD_ONLY = "right_pod_only"
     private const val KEY_AUTO_START = "auto_start_on_wake"
@@ -23,9 +26,32 @@ object ButtonMappingStore {
         pressType: PressType,
         customBindings: Map<ModeButtonBindingKey, MappedTargetAction> = emptyMap(),
         rightPodOnlyNoZwift: Boolean = false,
-        useZForShiftDownInSinglePodMode: Boolean = false
+        useZForShiftDownInSinglePodMode: Boolean = false,
+        podAssignment: PodAssignment = PodAssignment.LEGACY_SHARED
     ): MappedTargetAction {
-        val canonical = button.canonicalButton
+        if (podAssignment != PodAssignment.LEGACY_SHARED) {
+            val canonical = button.canonicalButton
+            if (!canonical.isRightPod) {
+                if (podAssignment == PodAssignment.RIGHT_ANKI_ONLY) return MappedTargetAction.NONE
+                return when (canonical) {
+                    ClickButton.SHIFT_UP_LEFT -> MappedTargetAction.MW_SHIFT_UP
+                    ClickButton.SHIFT_DOWN_LEFT -> if (pressType == PressType.LONG_PRESS) MappedTargetAction.MW_SHIFT_UP else MappedTargetAction.MW_SHIFT_DOWN
+                    ClickButton.LEFT -> MappedTargetAction.MW_STEER_LEFT
+                    ClickButton.RIGHT -> MappedTargetAction.MW_STEER_RIGHT
+                    ClickButton.UP -> MappedTargetAction.MW_CAMERA
+                    ClickButton.DOWN -> MappedTargetAction.MW_EMOTE
+                    else -> MappedTargetAction.NONE
+                }
+            }
+            return when (canonical) {
+                ClickButton.Y, ClickButton.SHIFT_DOWN_RIGHT -> if (pressType == PressType.LONG_PRESS) MappedTargetAction.ANKI_UNDO else MappedTargetAction.ANKI_FLIP_OR_AGAIN
+                ClickButton.Z -> if (pressType == PressType.LONG_PRESS) MappedTargetAction.ANKI_UNDO else MappedTargetAction.ANKI_FLIP_OR_HARD
+                ClickButton.B -> if (pressType == PressType.LONG_PRESS) MappedTargetAction.ANKI_UNDO else MappedTargetAction.ANKI_FLIP_OR_GOOD
+                ClickButton.A -> if (pressType == PressType.LONG_PRESS) MappedTargetAction.ANKI_FLIP_OR_EASY else MappedTargetAction.ANKI_FLIP_OR_GOOD
+                else -> if (pressType == PressType.LONG_PRESS) MappedTargetAction.ANKI_UNDO else MappedTargetAction.ANKI_FLIP_ONLY
+            }
+        }
+        val canonical = legacyCanonical(button)
         val key = ModeButtonBindingKey(mode, canonical, pressType)
         customBindings[key]?.let { return it }
 
@@ -53,7 +79,7 @@ object ButtonMappingStore {
         rightPodOnlyNoZwift: Boolean = false,
         useZForShiftDownInSinglePodMode: Boolean = false
     ): MappedTargetAction {
-        val canonical = button.canonicalButton
+        val canonical = legacyCanonical(button)
         if (rightPodOnlyNoZwift && useZForShiftDownInSinglePodMode) {
             if (canonical == ClickButton.Z && pressType == PressType.SINGLE_CLICK) {
                 when (mode) {
@@ -129,6 +155,12 @@ object ButtonMappingStore {
         }
     }
 
+    private fun legacyCanonical(button: ClickButton): ClickButton = when (button) {
+        ClickButton.SHIFT_UP_LEFT -> ClickButton.SHIFT_UP_RIGHT
+        ClickButton.SHIFT_DOWN_RIGHT -> ClickButton.SHIFT_DOWN_LEFT
+        else -> button.canonicalButton
+    }
+
     fun loadBindings(context: Context): Map<ModeButtonBindingKey, MappedTargetAction> {
         val prefs = context.getSharedPreferences(PREFS_BINDINGS, Context.MODE_PRIVATE)
         val result = mutableMapOf<ModeButtonBindingKey, MappedTargetAction>()
@@ -153,13 +185,29 @@ object ButtonMappingStore {
         editor.apply()
     }
 
+    internal fun podSettingsFrom(settings: Map<String, *>): Triple<PodAssignment, String?, String?> {
+        val assignment = (settings[KEY_ASSIGNMENT] as? String)?.let { name -> PodAssignment.entries.firstOrNull { it.name == name } }
+            ?: if (settings.isEmpty()) PodAssignment.RIGHT_ANKI_ONLY else PodAssignment.LEGACY_SHARED
+        return Triple(assignment, settings[KEY_RIGHT_PIN] as? String, settings[KEY_LEFT_PIN] as? String)
+    }
+
+    internal fun podSettingsFor(config: AppConfiguration): Map<String, String?> = mapOf(
+        KEY_ASSIGNMENT to config.podAssignment.name,
+        KEY_RIGHT_PIN to config.pinnedRightPodMac?.trim()?.ifBlank { null },
+        KEY_LEFT_PIN to config.pinnedLeftPodMac?.trim()?.ifBlank { null }
+    )
+
     fun loadFullConfiguration(context: Context): AppConfiguration {
         val prefs = context.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE)
-        val modeName = prefs.getString(KEY_MODE, OperatingMode.MODE_1_TABLET_SPLIT_SCREEN.name)
+        val defaultMode = if (prefs.all.isEmpty()) OperatingMode.MODE_5_UBUNTU_ANKICONNECT else OperatingMode.MODE_1_TABLET_SPLIT_SCREEN
+        val modeName = prefs.getString(KEY_MODE, defaultMode.name)
         val mode = OperatingMode.entries.firstOrNull { it.name == modeName }
             ?: OperatingMode.MODE_1_TABLET_SPLIT_SCREEN
-        return AppConfiguration(
+        val config = AppConfiguration(
             mode = mode,
+            podAssignment = podSettingsFrom(prefs.all).first,
+            pinnedRightPodMac = podSettingsFrom(prefs.all).second,
+            pinnedLeftPodMac = podSettingsFrom(prefs.all).third,
             rightPodOnlyNoZwift = prefs.getBoolean(KEY_RIGHT_POD_ONLY, true),
             useZForShiftDownInSinglePodMode = prefs.getBoolean(KEY_USE_Z_SHIFT_DOWN, true),
             autoStartOnControllerWake = prefs.getBoolean(KEY_AUTO_START, true),
@@ -171,11 +219,23 @@ object ButtonMappingStore {
             useMyShiftTouchFallbackWhenNoClient = prefs.getBoolean(KEY_TOUCH_FALLBACK, true),
             customBindings = loadBindings(context)
         )
+        val saved = PresetStore.deserialize(prefs.getString("named_presets_v1", null))
+        if (saved != null) return config.copy(presets = saved.first, activePresetId = saved.second ?: saved.first.first().id)
+        val existing = prefs.all.isNotEmpty() || config.customBindings.isNotEmpty()
+        val modes = if (existing) OperatingMode.entries else listOf(mode)
+        val presets = modes.map { oldMode ->
+            PresetStore.snapshot(if (existing) "Imported · ${oldMode.shortTitle}" else "My controls", if (oldMode == OperatingMode.MODE_5_UBUNTU_ANKICONNECT) AnkiTarget.ANKICONNECT else AnkiTarget.ANKIDROID) { button, press ->
+                resolveAction(oldMode, button, press, config.customBindings, config.rightPodOnlyNoZwift, config.useZForShiftDownInSinglePodMode, config.podAssignment)
+            }
+        }
+        return config.copy(presets = presets, activePresetId = presets[modes.indexOf(mode).coerceAtLeast(0)].id)
     }
 
     fun saveFullConfiguration(context: Context, config: AppConfiguration) {
-        context.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_MODE, config.mode.name)
+        val editor = context.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE).edit()
+        if (config.presets.isNotEmpty()) editor.putString("named_presets_v1", PresetStore.serialize(config.presets, config.activePresetId))
+        podSettingsFor(config).forEach { (key, value) -> editor.putString(key, value) }
+        editor.putString(KEY_MODE, config.mode.name)
             .putBoolean(KEY_RIGHT_POD_ONLY, config.rightPodOnlyNoZwift)
             .putBoolean(KEY_USE_Z_SHIFT_DOWN, config.useZForShiftDownInSinglePodMode)
             .putBoolean(KEY_AUTO_START, config.autoStartOnControllerWake)

@@ -95,15 +95,18 @@ class AnkiConnectClient {
         ) ?: return false
 
         // Self-healing check: if Desktop Anki was still on Question side, guiAnswerCard returns "result": false
-        if (response.contains("\"result\":false") || response.contains("\"result\": false")) {
+        if (Regex("\"result\"\\s*:\\s*false").containsMatchIn(response)) {
+            isAnswerVisible = false
             val flipped = sendJsonRpc(host, port, """{"action":"guiShowAnswer","version":6}""")
-            isAnswerVisible = true
-            lastFlipTimestampMs = nowMs
+            if (flipped) {
+                isAnswerVisible = true
+                lastFlipTimestampMs = nowMs
+            }
             DiagnosticLogger.info(LogCategory.ANKI, "Ubuntu AnkiConnect ($host:$port): Card was on Question side -> auto-called guiShowAnswer")
             return flipped
         }
 
-        val ok = response.contains("\"error\":null") || response.contains("\"error\": null")
+        val ok = Regex("\"error\"\\s*:\\s*null").containsMatchIn(response)
         if (ok) {
             isAnswerVisible = false
             DiagnosticLogger.info(LogCategory.ANKI, "Ubuntu AnkiConnect ($host:$port): Graded card -> $label (guiAnswerCard ease=$ease)")
@@ -115,7 +118,8 @@ class AnkiConnectClient {
 
     fun sendJsonRpc(host: String, port: Int, jsonBody: String): Boolean {
         val resp = sendJsonRpcRaw(host, port, jsonBody) ?: return false
-        return resp.contains("\"error\":null") || resp.contains("\"error\": null")
+        return Regex("\"error\"\\s*:\\s*null").containsMatchIn(resp) &&
+            !Regex("\"result\"\\s*:\\s*false").containsMatchIn(resp)
     }
 
     fun sendJsonRpcRaw(host: String, port: Int, jsonBody: String): String? {

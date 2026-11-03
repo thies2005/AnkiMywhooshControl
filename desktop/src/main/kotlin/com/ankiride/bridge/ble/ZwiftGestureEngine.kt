@@ -24,6 +24,12 @@ class ZwiftGestureEngine(
         ClickButton.entries.forEach { put(it, ButtonStateTracker()) }
     }
 
+    @Synchronized
+    fun reset() {
+        trackers.values.forEach { it.isPressed = false; it.longPressTriggered = false; it.lastEmittedTime = -1000L }
+    }
+
+    @Synchronized
     fun processButtonStates(states: Map<ClickButton, Boolean>, nowMs: Long = System.currentTimeMillis()) {
         states.forEach { (button, isPressed) ->
             val tracker = trackers[button] ?: return@forEach
@@ -43,7 +49,10 @@ class ZwiftGestureEngine(
             } else if (!isPressed && tracker.isPressed) {
                 tracker.isPressed = false
                 val holdDuration = nowMs - tracker.pressStartTime
-                if (!tracker.longPressTriggered && holdDuration < LONG_PRESS_THRESHOLD_MS) {
+                if (!tracker.longPressTriggered && holdDuration >= LONG_PRESS_THRESHOLD_MS) {
+                    tracker.lastEmittedTime = nowMs
+                    onGestureDetected(ButtonGestureEvent(button, PressType.LONG_PRESS, nowMs))
+                } else if (!tracker.longPressTriggered) {
                     if ((nowMs - tracker.lastEmittedTime) >= DEBOUNCE_WINDOW_MS) {
                         tracker.lastEmittedTime = nowMs
                         onGestureDetected(ButtonGestureEvent(button, PressType.SINGLE_CLICK, nowMs))

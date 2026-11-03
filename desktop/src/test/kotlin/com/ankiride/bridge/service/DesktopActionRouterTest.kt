@@ -4,6 +4,7 @@ import com.ankiride.bridge.ble.DesktopZwiftBleController
 import com.ankiride.bridge.core.AnkiAction
 import com.ankiride.bridge.core.AnkiActionDispatcher
 import com.ankiride.bridge.core.AppConfiguration
+import com.ankiride.bridge.core.ButtonMappingStore
 import com.ankiride.bridge.core.ButtonGestureEvent
 import com.ankiride.bridge.core.ClickButton
 import com.ankiride.bridge.core.DiagnosticLogger
@@ -13,6 +14,7 @@ import com.ankiride.bridge.core.ModeButtonBindingKey
 import com.ankiride.bridge.core.MyWhooshAction
 import com.ankiride.bridge.core.MyWhooshActionDispatcher
 import com.ankiride.bridge.core.OperatingMode
+import com.ankiride.bridge.core.PodAssignment
 import com.ankiride.bridge.core.PressType
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -54,7 +56,7 @@ class DesktopActionRouterTest {
 
     @Test
     fun testMode1TabletSplitScreenRouting() = runTest {
-        val config = AppConfiguration(mode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN)
+        val config = AppConfiguration(podAssignment = PodAssignment.LEGACY_SHARED, useZForShiftDownInSinglePodMode = false, mode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN)
         val router = DesktopActionRouter(
             scope = this,
             configSupplier = { config },
@@ -113,7 +115,7 @@ class DesktopActionRouterTest {
 
     @Test
     fun testMode2TabletAnkiPhoneMyWhooshRouting() = runTest {
-        val config = AppConfiguration(mode = OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH)
+        val config = AppConfiguration(podAssignment = PodAssignment.LEGACY_SHARED, useZForShiftDownInSinglePodMode = false, mode = OperatingMode.MODE_2_TABLET_ANKI_PHONE_MYWHOOSH)
         val router = DesktopActionRouter(
             scope = this,
             configSupplier = { config },
@@ -135,7 +137,7 @@ class DesktopActionRouterTest {
 
     @Test
     fun testMode3AnkiOnlyRouting() = runTest {
-        val config = AppConfiguration(mode = OperatingMode.MODE_3_ANKI_ONLY)
+        val config = AppConfiguration(podAssignment = PodAssignment.LEGACY_SHARED, useZForShiftDownInSinglePodMode = false, mode = OperatingMode.MODE_3_ANKI_ONLY)
         val router = DesktopActionRouter(
             scope = this,
             configSupplier = { config },
@@ -176,7 +178,7 @@ class DesktopActionRouterTest {
 
     @Test
     fun testMode4MyWhooshOnlyRouting() = runTest {
-        val config = AppConfiguration(mode = OperatingMode.MODE_4_MYWHOOSH_ONLY)
+        val config = AppConfiguration(podAssignment = PodAssignment.LEGACY_SHARED, useZForShiftDownInSinglePodMode = false, mode = OperatingMode.MODE_4_MYWHOOSH_ONLY)
         val router = DesktopActionRouter(
             scope = this,
             configSupplier = { config },
@@ -217,7 +219,7 @@ class DesktopActionRouterTest {
 
     @Test
     fun testMode5UbuntuAnkiConnectRouting() = runTest {
-        val config = AppConfiguration(mode = OperatingMode.MODE_5_UBUNTU_ANKICONNECT)
+        val config = AppConfiguration(podAssignment = PodAssignment.LEGACY_SHARED, useZForShiftDownInSinglePodMode = false, mode = OperatingMode.MODE_5_UBUNTU_ANKICONNECT)
         val router = DesktopActionRouter(
             scope = this,
             configSupplier = { config },
@@ -259,7 +261,7 @@ class DesktopActionRouterTest {
                 PressType.SINGLE_CLICK
             ) to MappedTargetAction.NONE
         )
-        val config = AppConfiguration(
+        val config = AppConfiguration(podAssignment = PodAssignment.LEGACY_SHARED, useZForShiftDownInSinglePodMode = false,
             mode = OperatingMode.MODE_1_TABLET_SPLIT_SCREEN,
             customBindings = customBindings
         )
@@ -286,8 +288,8 @@ class DesktopActionRouterTest {
 
     @Test
     fun testFeedbackCueManagerAudioEnabledAndDisabled() {
-        val configAudioDisabled = AppConfiguration(audioFeedbackEnabled = false)
-        val configAudioEnabled = AppConfiguration(audioFeedbackEnabled = true)
+        val configAudioDisabled = AppConfiguration(podAssignment = PodAssignment.LEGACY_SHARED, useZForShiftDownInSinglePodMode = false, audioFeedbackEnabled = false)
+        val configAudioEnabled = AppConfiguration(podAssignment = PodAssignment.LEGACY_SHARED, useZForShiftDownInSinglePodMode = false, audioFeedbackEnabled = true)
 
         // NONE action should never trigger audio
         DesktopFeedbackCueManager.triggerCue(MappedTargetAction.NONE, configAudioEnabled)
@@ -312,7 +314,7 @@ class DesktopActionRouterTest {
 
     @Test
     fun testEndToEndControllerToRouterDiagnosticPipeline() = runTest {
-        val config = AppConfiguration(
+        val config = AppConfiguration(podAssignment = PodAssignment.LEGACY_SHARED, useZForShiftDownInSinglePodMode = false,
             mode = OperatingMode.MODE_5_UBUNTU_ANKICONNECT,
             rightPodOnlyNoZwift = true
         )
@@ -362,5 +364,28 @@ class DesktopActionRouterTest {
 
         collectJob.cancel()
         controller.disconnect()
+    }
+    @Test
+    fun assignmentsKeepActionsOnTheirOwnSide() = runTest {
+        val router = DesktopActionRouter(scope = this, configSupplier = { AppConfiguration() },
+            ankiDispatcher = ankiDispatcher, myWhooshDispatcher = myWhooshDispatcher)
+        for (button in ClickButton.entries) for (press in PressType.entries) {
+            val only = ButtonMappingStore.assignedAction(PodAssignment.RIGHT_ANKI_ONLY, button, press)
+            assertTrue(only.myWhooshAction == null)
+            if (!button.isRightPod) assertEquals(MappedTargetAction.NONE, only)
+            val dual = ButtonMappingStore.assignedAction(PodAssignment.RIGHT_ANKI_LEFT_BIKE, button, press)
+            if (button.isRightPod) assertTrue(dual.myWhooshAction == null)
+            else assertTrue(dual.ankiAction == null)
+        }
+        assertEquals(MappedTargetAction.ANKI_FLIP_OR_AGAIN, ButtonMappingStore.assignedAction(PodAssignment.RIGHT_ANKI_ONLY, ClickButton.SHIFT_DOWN_RIGHT, PressType.SINGLE_CLICK))
+        assertEquals(MappedTargetAction.ANKI_UNDO, ButtonMappingStore.assignedAction(PodAssignment.RIGHT_ANKI_ONLY, ClickButton.SHIFT_DOWN_RIGHT, PressType.LONG_PRESS))
+        assertEquals(MappedTargetAction.MW_SHIFT_UP, ButtonMappingStore.assignedAction(PodAssignment.RIGHT_ANKI_LEFT_BIKE, ClickButton.SHIFT_UP_LEFT, PressType.SINGLE_CLICK))
+    }
+    @Test
+    fun legacySinglePodZOverrideIsHonored() = runTest {
+        val config = AppConfiguration(podAssignment = PodAssignment.LEGACY_SHARED, useZForShiftDownInSinglePodMode = true)
+        val router = DesktopActionRouter(scope = this, configSupplier = { config }, ankiDispatcher = ankiDispatcher, myWhooshDispatcher = myWhooshDispatcher)
+        router.routeGesture(ButtonGestureEvent(ClickButton.Z, PressType.SINGLE_CLICK))
+        assertEquals(MappedTargetAction.MW_SHIFT_DOWN.label, router.lastRoutedActionLabel.value)
     }
 }

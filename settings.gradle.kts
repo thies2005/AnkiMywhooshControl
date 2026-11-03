@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AnkiRideBridge"
+rootProject.name = "ClickControl"
 
 include(":desktop")
 

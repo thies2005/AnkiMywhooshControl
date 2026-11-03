@@ -1,6 +1,9 @@
 package com.ankiride.bridge
 
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
@@ -66,7 +69,7 @@ fun createTrayPainter(): androidx.compose.ui.graphics.painter.Painter {
  * Prints "SELF_TEST_OK" and exits with code 0 on success.
  */
 fun runHeadlessSelfTest() {
-    println("--- AnkiRide Bridge Desktop Headless Self-Test ---")
+    println("--- ClickControl Desktop Headless Self-Test ---")
 
     // 1. Verify ZwiftPacketParser
     val zPacket = byteArrayOf(
@@ -175,8 +178,8 @@ fun runHeadlessSelfTest() {
         myWhooshDispatcher = fakeMyWhoosh
     )
     router.routeGesture(ButtonGestureEvent(ClickButton.Z, PressType.SINGLE_CLICK))
-    check(router.lastRoutedActionLabel.value == MappedTargetAction.MW_SHIFT_UP.label) {
-        "DesktopActionRouter failed label check: expected '${MappedTargetAction.MW_SHIFT_UP.label}', got '${router.lastRoutedActionLabel.value}'"
+    check(router.lastRoutedActionLabel.value == MappedTargetAction.ANKI_FLIP_OR_HARD.label) {
+        "DesktopActionRouter failed label check: expected '${MappedTargetAction.ANKI_FLIP_OR_HARD.label}', got '${router.lastRoutedActionLabel.value}'"
     }
     println("✓ DesktopActionRouter verification passed")
 
@@ -194,6 +197,8 @@ fun main(args: Array<String>) {
         var config by remember { mutableStateOf(ButtonMappingStore.loadConfiguration()) }
         var isBridgeRunning by remember { mutableStateOf(false) }
         var isMainWindowVisible by remember { mutableStateOf(true) }
+        var presetDirty by remember { mutableStateOf(false) }
+        var confirmQuit by remember { mutableStateOf(false) }
 
         val scope = rememberCoroutineScope()
         val openBikeClient = remember { OpenBikeControlClient() }
@@ -254,9 +259,9 @@ fun main(args: Array<String>) {
 
         // Programmatic Tray Icon
         val trayPainter = remember { createTrayPainter() }
-        Tray(
+        if (java.awt.SystemTray.isSupported()) Tray(
             icon = trayPainter,
-            tooltip = "AnkiRide Bridge — Zwift Click v2",
+            tooltip = "ClickControl — Zwift Click v2",
             menu = {
                 Item(
                     text = if (isBridgeRunning) "Bridge: Active (Click to Stop)" else "Bridge: Stopped (Click to Start)",
@@ -274,13 +279,13 @@ fun main(args: Array<String>) {
                 )
                 Separator()
                 Item(
-                    text = "Quit AnkiRide Bridge",
+                    text = "Quit ClickControl",
                     onClick = {
-                        if (isBridgeRunning) {
-                            bleController.disconnect()
-                            openBikeClient.stopServer()
+                        if (presetDirty) { isMainWindowVisible = true; confirmQuit = true }
+                        else {
+                            if (isBridgeRunning) { bleController.disconnect(); openBikeClient.stopServer() }
+                            exitApplication()
                         }
-                        exitApplication()
                     }
                 )
             }
@@ -290,14 +295,15 @@ fun main(args: Array<String>) {
         val mainWindowState = rememberWindowState(width = 1320.dp, height = 880.dp)
         Window(
             onCloseRequest = {
-                // Minimize to tray
-                isMainWindowVisible = false
+                if (java.awt.SystemTray.isSupported()) isMainWindowVisible = false
+                else if (presetDirty) confirmQuit = true
+                else { bleController.disconnect(); openBikeClient.stopServer(); exitApplication() }
             },
             state = mainWindowState,
             visible = isMainWindowVisible,
-            title = "AnkiRide Bridge — Zwift Click v2 Desktop (Ubuntu / macOS / Windows)"
+            title = "ClickControl — Zwift Click v2 Desktop (Ubuntu / macOS / Windows)"
         ) {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            MaterialTheme(colorScheme = com.ankiride.bridge.ui.ClickControlColors) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -312,7 +318,8 @@ fun main(args: Array<String>) {
                         connectedLeftMac = connectedLeftMac,
                         hasMyWhooshClient = connectedClientCount > 0,
                         lastRoutedActionLabel = lastActionText,
-                        onMinimizeToTray = { isMainWindowVisible = false },
+                        onMinimizeToTray = { if (java.awt.SystemTray.isSupported()) isMainWindowVisible = false },
+                        onPresetDirtyChange = { presetDirty = it },
                         onSimulateGesture = { button, pressType ->
                             bleController.emitSimulatedGesture(button, pressType)
                         },
@@ -326,6 +333,13 @@ fun main(args: Array<String>) {
                                 desktopMyWhooshDispatcher.dispatch(mwAction, config)
                             }
                         }
+                    )
+                    if (confirmQuit) AlertDialog(
+                        onDismissRequest = { confirmQuit = false },
+                        title = { Text("Discard unsaved changes?") },
+                        text = { Text("Save your preset before quitting, or discard the changes.") },
+                        confirmButton = { TextButton(onClick = { bleController.disconnect(); openBikeClient.stopServer(); exitApplication() }) { Text("Discard and quit") } },
+                        dismissButton = { TextButton(onClick = { confirmQuit = false }) { Text("Keep editing") } }
                     )
                 }
             }

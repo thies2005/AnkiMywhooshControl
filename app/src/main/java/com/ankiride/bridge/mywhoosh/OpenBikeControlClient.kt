@@ -23,7 +23,7 @@ class OpenBikeControlClient(
         const val MAX_CONNECTED_CLIENTS = 4
         const val CLIENT_SO_TIMEOUT_MS = 60_000
         const val SERVICE_TYPE = "_openbikecontrol._tcp."
-        const val SERVICE_NAME = "AnkiRideBridge"
+        const val SERVICE_NAME = "ClickControl"
         const val OPENBIKE_BLE_SERVICE_UUID = "d273f680-d548-419d-b9d1-fa0472345229"
         const val MSG_BUTTON_STATE: Byte = 0x01
         const val MSG_DEVICE_STATUS: Byte = 0x02
@@ -34,58 +34,85 @@ class OpenBikeControlClient(
         const val PRESS_HOLD_MS = 90L
     }
 
-    private var serverSocket: ServerSocket? = null
+    private val lifecycleLock = Any()
+    private var serverGeneration = 0L
+    @Volatile private var serverSocket: ServerSocket? = null
     private var acceptJob: Job? = null
     private var nsdManager: NsdManager? = null
     private var registrationListener: NsdManager.RegistrationListener? = null
     val connectedClients = CopyOnWriteArrayList<Socket>()
 
     fun startServer(port: Int = DEFAULT_PORT, bindLocalhostOnly: Boolean = false) {
-        if (serverSocket != null) return
-        acceptJob = scope.launch(Dispatchers.IO) {
-            try {
-                val bindAddr = if (bindLocalhostOnly) {
-                    InetAddress.getByName("127.0.0.1")
-                } else {
-                    InetAddress.getByName("0.0.0.0")
-                }
-                val srv = ServerSocket(port, 50, bindAddr)
-                serverSocket = srv
-                DiagnosticLogger.info(
-                    LogCategory.MYWHOOSH,
-                    "OpenBikeControl TCP Server listening on port ${srv.localPort}"
-                )
-                registerMdnsService(srv.localPort)
-                while (isActive && !srv.isClosed) {
-                    val client = srv.accept()
-                    val rawHost = client.inetAddress?.hostAddress ?: ""
-                    if (LanAddressValidator.isLocalOrLanAddress(rawHost)) {
-                        client.tcpNoDelay = true
-                        client.soTimeout = CLIENT_SO_TIMEOUT_MS
-                        connectedClients.removeIf { it.isClosed || !it.isConnected }
-                        while (connectedClients.size >= MAX_CONNECTED_CLIENTS) {
-                            val oldest = if (connectedClients.isNotEmpty()) connectedClients.removeAt(0) else break
-                            try {
-                                oldest.close()
-                            } catch (_: Exception) {
-                            }
-                        }
-                        connectedClients.add(client)
+        synchronized(lifecycleLock) {
+            if (acceptJob?.isActive == true || serverSocket != null) return
+            val generation = ++serverGeneration
+            acceptJob = scope.launch {
+                var ownedSocket: ServerSocket? = null
+                try {
+                    val bindAddr = if (bindLocalhostOnly) {
+                        InetAddress.getByName("127.0.0.1")
+                    } else {
+                        InetAddress.getByName("0.0.0.0")
+                    }
+                    val srv = ServerSocket(port, 50, bindAddr)
+                    ownedSocket = srv
+                    synchronized(lifecycleLock) {
+                        if (generation != serverGeneration || !isActive) return@launch
+                        serverSocket = srv
                         DiagnosticLogger.info(
                             LogCategory.MYWHOOSH,
-                            "MyWhoosh connected from $rawHost (tcpNoDelay=true, clients=${connectedClients.size})"
+                            "OpenBikeControl TCP Server listening on port ${srv.localPort}"
                         )
-                        // Send initial OpenBikeControl 0x02 Device Status (100% battery, connected = 1)
-                        sendRawBytes(client, byteArrayOf(MSG_DEVICE_STATUS, 0x64, 0x01))
-                        listenToClientMessages(client, rawHost)
-                    } else {
-                        DiagnosticLogger.warn(LogCategory.MYWHOOSH, "Rejected non-LAN socket from $rawHost")
-                        client.close()
+                        registerMdnsService(srv.localPort)
                     }
-                }
-            } catch (e: Exception) {
-                if (isActive) {
-                    DiagnosticLogger.error(LogCategory.MYWHOOSH, "OpenBikeControl server error: ${e.message}")
+                    while (isActive && !srv.isClosed) {
+                        val client = srv.accept()
+                        synchronized(lifecycleLock) {
+                            if (generation != serverGeneration || !isActive) {
+                                client.close()
+                                return@launch
+                            }
+                            val rawHost = client.inetAddress?.hostAddress ?: ""
+                            if (LanAddressValidator.isLocalOrLanAddress(rawHost)) {
+                                client.tcpNoDelay = true
+                                client.soTimeout = CLIENT_SO_TIMEOUT_MS
+                                connectedClients.removeIf { it.isClosed || !it.isConnected }
+                                while (connectedClients.size >= MAX_CONNECTED_CLIENTS) {
+                                    val oldest = if (connectedClients.isNotEmpty()) connectedClients.removeAt(0) else break
+                                    try {
+                                        oldest.close()
+                                    } catch (_: Exception) {
+                                    }
+                                }
+                                connectedClients.add(client)
+                                DiagnosticLogger.info(
+                                    LogCategory.MYWHOOSH,
+                                    "MyWhoosh connected from $rawHost (tcpNoDelay=true, clients=${connectedClients.size})"
+                                )
+                                // Send initial OpenBikeControl 0x02 Device Status (100% battery, connected = 1)
+                                sendRawBytes(client, byteArrayOf(MSG_DEVICE_STATUS, 0x64, 0x01))
+                                listenToClientMessages(client, rawHost)
+                            } else {
+                                DiagnosticLogger.warn(LogCategory.MYWHOOSH, "Rejected non-LAN socket from $rawHost")
+                                client.close()
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (isActive) {
+                        DiagnosticLogger.error(LogCategory.MYWHOOSH, "OpenBikeControl server error: ${e.message}")
+                    }
+                } finally {
+                    runCatching { ownedSocket?.close() }
+                    synchronized(lifecycleLock) {
+                        if (generation == serverGeneration) {
+                            serverSocket = null
+                            registrationListener?.let { listener ->
+                                runCatching { nsdManager?.unregisterService(listener) }
+                            }
+                            registrationListener = null
+                        }
+                    }
                 }
             }
         }
@@ -122,6 +149,7 @@ class OpenBikeControlClient(
                 }
             } catch (_: Exception) {
             } finally {
+                runCatching { client.close() }
                 connectedClients.remove(client)
                 DiagnosticLogger.warn(LogCategory.MYWHOOSH, "MyWhoosh client $host disconnected")
             }
@@ -232,9 +260,9 @@ class OpenBikeControlClient(
             setPort(port)
             setAttribute("version", "1")
             setAttribute("id", "ankiride01")
-            setAttribute("name", "AnkiRide Bridge")
+            setAttribute("name", "ClickControl")
             setAttribute("service-uuids", OPENBIKE_BLE_SERVICE_UUID)
-            setAttribute("manufacturer", "AnkiRide")
+            setAttribute("manufacturer", "ClickControl")
             setAttribute("model", "Zwift Click v2 Bridge")
         }
 
@@ -257,26 +285,30 @@ class OpenBikeControlClient(
     }
 
     fun stopServer() {
-        acceptJob?.cancel()
-        registrationListener?.let { listener ->
+        synchronized(lifecycleLock) {
+            ++serverGeneration
+            acceptJob?.cancel()
+            acceptJob = null
+            registrationListener?.let { listener ->
+                try {
+                    nsdManager?.unregisterService(listener)
+                } catch (_: Exception) {
+                }
+            }
+            registrationListener = null
+            connectedClients.forEach {
+                try {
+                    it.close()
+                } catch (_: Exception) {
+                }
+            }
+            connectedClients.clear()
             try {
-                nsdManager?.unregisterService(listener)
+                serverSocket?.close()
             } catch (_: Exception) {
             }
+            serverSocket = null
         }
-        registrationListener = null
-        connectedClients.forEach {
-            try {
-                it.close()
-            } catch (_: Exception) {
-            }
-        }
-        connectedClients.clear()
-        try {
-            serverSocket?.close()
-        } catch (_: Exception) {
-        }
-        serverSocket = null
     }
 
     fun close() {
