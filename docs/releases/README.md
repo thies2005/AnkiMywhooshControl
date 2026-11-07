@@ -1,4 +1,10 @@
-# Android release channels
+<h1 align="center">Android release channels</h1>
+
+<p align="center"><strong>Project reference</strong><br>Setup, usage, and maintenance guidance.</p>
+
+<p align="center">
+  <a href="../../README.md">Project overview</a>
+</p>
 
 ClickControl uses GPL-3.0-or-later (SPDX). See the root LICENSE. Dependency
 licenses and notices remain applicable.
