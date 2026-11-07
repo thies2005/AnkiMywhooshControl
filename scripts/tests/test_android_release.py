@@ -44,6 +44,29 @@ class ReleaseMetadataTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release.validate_manifest(bad)
 
+    def test_framework_icon_does_not_hide_manifest_identity_checks(self):
+        import os
+        import tempfile
+        from unittest.mock import patch
+        xml = '''<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+            package="com.ankiride.bridge" android:versionCode="1000040"
+            android:versionName="4.0.0-dev.test">
+            <application android:icon="@android:drawable/ic_menu_manage" />
+        </manifest>'''
+        metadata = {'version_code': 1000040, 'version_name': '4.0.0-dev.test'}
+        with tempfile.TemporaryDirectory() as folder:
+            analyzer = Path(folder) / 'cmdline-tools/latest/bin/apkanalyzer'
+            analyzer.parent.mkdir(parents=True)
+            analyzer.touch()
+            with patch.dict(os.environ, {'ANDROID_HOME': folder}), patch.object(release.subprocess, 'check_output', return_value=xml):
+                release.verify_apk_metadata(Path('app.apk'), metadata)
+                for invalid in [dict(metadata, version_code=1), dict(metadata, version_name='wrong')]:
+                    with self.assertRaises(ValueError):
+                        release.verify_apk_metadata(Path('app.apk'), invalid)
+            with patch.dict(os.environ, {'ANDROID_HOME': folder}), patch.object(release.subprocess, 'check_output', return_value=xml.replace('com.ankiride.bridge', 'other.package')):
+                with self.assertRaises(ValueError):
+                    release.verify_apk_metadata(Path('app.apk'), metadata)
+
 class PublicationTests(unittest.TestCase):
     def test_rolling_upload_failure_retains_old_assets_and_tag(self):
         self.exercise(fail_upload=True)

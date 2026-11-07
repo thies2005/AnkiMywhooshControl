@@ -85,6 +85,33 @@ def validate_manifest(downloads: dict[str, bytes]) -> None:
         raise ValueError('Checksum manifest does not cover exactly the asset set')
 
 
+def verify_apk_metadata(path: Path, metadata: dict) -> None:
+    tools = Path(os.environ['ANDROID_HOME']) / 'cmdline-tools'
+    analyzer = tools / 'latest/bin/apkanalyzer'
+    if not analyzer.is_file():
+        candidates = sorted(tools.glob('*/bin/apkanalyzer'), key=lambda p: tuple(int(n) for n in re.findall(r'\d+', p.parent.parent.name)))
+        if not candidates:
+            raise ValueError('Android apkanalyzer is required for APK manifest verification')
+        analyzer = candidates[-1]
+    # Parse only manifest attributes. Legacy aapt badging can fail resolving a
+    # framework icon even when package/version fields and the APK are valid.
+    xml = subprocess.check_output([str(analyzer), 'manifest', 'print', str(path)], text=True)
+    manifest = ET.fromstring(xml)
+    android = '{http://schemas.android.com/apk/res/android}'
+    expected = ('com.ankiride.bridge', str(metadata['version_code']), metadata['version_name'])
+    actual = (manifest.get('package'), manifest.get(android + 'versionCode'), manifest.get(android + 'versionName'))
+    if actual != expected:
+        raise ValueError('APK package/version metadata mismatch')
+
+
+def verify_staged_apk() -> None:
+    paths = list(Path('release-assets').glob('*.apk'))
+    if len(paths) != 1:
+        raise ValueError('Expected exactly one staged APK')
+    metadata = json.loads(Path(os.environ['RUNNER_TEMP'], 'release-plan.json').read_text())
+    verify_apk_metadata(paths[0], metadata)
+
+
 def verify_published_binaries(downloads: dict[str, bytes], metadata: dict) -> None:
     expected = os.environ['RELEASE_CERT_SHA256']
     tools = Path(os.environ['ANDROID_HOME']) / 'build-tools'
@@ -100,10 +127,7 @@ def verify_published_binaries(downloads: dict[str, bytes], metadata: dict) -> No
                 certs = set(re.findall(r'certificate SHA-256 digest: ([0-9a-f]+)', details))
                 if certs != {expected}:
                     raise ValueError('Published APK signing certificate mismatch')
-                package = subprocess.check_output([str(signer.with_name('aapt')), 'dump', 'badging', str(path)], text=True).splitlines()[0]
-                for field, value in [('name', 'com.ankiride.bridge'), ('versionCode', metadata['version_code']), ('versionName', metadata['version_name'])]:
-                    if f"{field}='{value}'" not in package:
-                        raise ValueError('Published APK package metadata mismatch')
+                verify_apk_metadata(path, metadata)
             else:
                 verified = subprocess.check_output(['jarsigner', '-verify', str(path)], text=True)
                 if not re.search(r'^jar verified\.', verified, re.M):
@@ -225,6 +249,6 @@ def publish() -> None:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['plan', 'publish'])
+    parser.add_argument('command', choices=['plan', 'publish', 'verify-apk'])
     args = parser.parse_args()
-    {'plan': plan, 'publish': publish}[args.command]()
+    {'plan': plan, 'publish': publish, 'verify-apk': verify_staged_apk}[args.command]()
