@@ -14,6 +14,9 @@ android {
         targetSdk = 35
         versionCode = 4
         versionName = "4.0.0"
+        // Keep literal defaults above for source builds; CI allocates monotonic codes.
+        System.getenv("ANDROID_VERSION_CODE")?.let { versionCode = it.toInt() }
+        System.getenv("ANDROID_VERSION_NAME")?.let { versionName = it }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -36,10 +39,9 @@ android {
     buildTypes {
         release {
             val releaseSigning = signingConfigs.getByName("release")
-            signingConfig = if (releaseSigning.storeFile != null) {
-                releaseSigning
-            } else {
-                signingConfigs.getByName("debug")
+            // Unsigned source builds are allowed; never disguise a release with a debug key.
+            if (releaseSigning.storeFile != null) {
+                signingConfig = releaseSigning
             }
             isMinifyEnabled = false
             proguardFiles(

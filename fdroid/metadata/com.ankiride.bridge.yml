@@ -1,0 +1,24 @@
+# Preparation draft; not submitted or verified by F-Droid.
+Categories:
+  - System
+License: GPL-3.0-or-later
+AuthorName: Thies Schuelken
+SourceCode: https://github.com/thies2005/AnkiMywhooshControl
+IssueTracker: https://github.com/thies2005/AnkiMywhooshControl/issues
+Name: ClickControl
+Summary: Map controller buttons to actions on your Android device
+Description: |-
+  Configure controller input mappings and action presets. Some actions require
+  the user to enable the Android accessibility service.
+Disabled: >-
+  Preparation draft: release commit, dependency license review, clean source
+  build recipe and reproducibility/signing compatibility are not yet verified.
+RepoType: git
+Repo: https://github.com/thies2005/AnkiMywhooshControl.git
+AutoUpdateMode: None
+UpdateCheckMode: None
+MaintainerNotes: |-
+  Android module is app in the repository root. Desktop packaging must not run
+  during an Android source build. Establish a tested immutable release commit,
+  exact toolchain and a verified dependency scan before adding Builds entries.
+  Do not invent a Binaries/AllowedAPKSigningKeys claim without reproducibility.

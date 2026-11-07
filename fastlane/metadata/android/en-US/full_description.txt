@@ -1,0 +1,6 @@
+ClickControl maps supported controller inputs to configurable actions for your Android device. Configure presets and named button mappings to control your chosen apps.
+
+Some actions require explicitly enabling the Android accessibility service. Review the configured actions and Android permissions before enabling them.
+
+Source code and issue tracking: https://github.com/thies2005/AnkiMywhooshControl
+License: GPL-3.0-or-later
